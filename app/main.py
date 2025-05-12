@@ -7,6 +7,8 @@ import glob # Import glob
 # Add parent directory to path to import modules
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from app.ingestion.processor import DocumentAIProcessor
+from app.database.db import Database
+from app.load_transactions import load_transactions, query_examples
 
 def get_file_patterns(doc_type):
     """Get file patterns based on document type."""
@@ -114,7 +116,6 @@ def process_documents(input_dir: str, output_dir: str, doc_type: str):
         try:
             # Process the document
             result = processor.process_document(str(file), doc_type)
-            print(result)
             # Save results as JSON
             # Use output_path which is now absolute
             output_file = output_path / f"{file.stem}.json"
@@ -124,9 +125,43 @@ def process_documents(input_dir: str, output_dir: str, doc_type: str):
         except Exception as e:
             print(f"❌ Error processing {file.name}: {str(e)}")
 
-# ... main function and __main__ block remain the same ...
+def process_and_load_to_database(processed_dir: str = "app/data/processed", run_examples: bool = True):
+    """
+    Process all document JSONs and load them into the SQLite database.
+    
+    Args:
+        processed_dir: Directory containing processed JSON files
+        run_examples: Whether to run example queries after loading
+    """
+    print("\n" + "="*80)
+    print("LOADING DATA INTO DATABASE")
+    print("="*80)
+    
+    # Create database directory if it doesn't exist
+    db_dir = os.path.join(os.path.dirname(processed_dir), "db")
+    os.makedirs(db_dir, exist_ok=True)
+    
+    # Set database path
+    db_path = os.path.join(db_dir, "transactions.db")
+    
+    try:
+        # Load transactions into database
+        results = load_transactions(processed_dir)
+        
+        print(f"\nDatabase created at: {db_path}")
+        
+        # Run example queries if requested
+        if run_examples:
+            print("\n" + "="*80)
+            print("RUNNING DATABASE QUERIES")
+            print("="*80)
+            query_examples(db_path)
+            
+    except Exception as e:
+        print(f"❌ Error loading data into database: {e}")
+
 def main():
-    parser = argparse.ArgumentParser(description="Process documents using Google Document AI")
+    parser = argparse.ArgumentParser(description="Process documents using Google Document AI and load into SQLite database")
     parser.add_argument(
         "--input", "-i",
         help="Directory containing files to process (e.g., data/receipt or app/data/receipt)"
@@ -140,6 +175,16 @@ def main():
         "--type", "-t",
         choices=["receipt", "income_statement", "payslip", "all"],
         help="Type of document to process (default: all)"
+    )
+    parser.add_argument(
+        "--skip-db", "-s",
+        action="store_true",
+        help="Skip database creation and loading step"
+    )
+    parser.add_argument(
+        "--skip-examples", "-e",
+        action="store_true",
+        help="Skip running example queries"
     )
 
     args = parser.parse_args()
@@ -170,6 +215,10 @@ def main():
     else:
         # Process the specified type only
         process_documents(args.input, args.output, args.type)
+    
+    # After processing documents, load them into the database
+    if not args.skip_db:
+        process_and_load_to_database(args.output, not args.skip_examples)
 
 if __name__ == "__main__":
     main()
