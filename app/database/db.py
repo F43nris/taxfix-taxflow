@@ -68,6 +68,8 @@ class Database:
             employee_name_confidence REAL,
             employer_name TEXT,
             employer_name_confidence REAL,
+            occupation_category TEXT,
+            occupation_category_confidence REAL,
             filing_id TEXT,
             tax_year INTEGER,
             filing_date TEXT,
@@ -144,6 +146,8 @@ class Database:
                 employee_name_confidence = COALESCE(?, employee_name_confidence),
                 employer_name = COALESCE(?, employer_name),
                 employer_name_confidence = COALESCE(?, employer_name_confidence),
+                occupation_category = COALESCE(?, occupation_category),
+                occupation_category_confidence = COALESCE(?, occupation_category_confidence),
                 filing_id = COALESCE(?, filing_id),
                 tax_year = COALESCE(?, tax_year),
                 filing_date = COALESCE(?, filing_date),
@@ -163,6 +167,7 @@ class Database:
             ''', (
                 user.employee_name, user.employee_name_confidence,
                 user.employer_name, user.employer_name_confidence,
+                user.occupation_category, user.occupation_category_confidence,
                 user.filing_id, user.tax_year, filing_date,
                 user.avg_gross_pay, user.gross_pay_confidence,
                 user.avg_net_pay, user.net_pay_confidence,
@@ -180,16 +185,18 @@ class Database:
             self.cursor.execute('''
             INSERT INTO users (
                 user_id, employee_name, employee_name_confidence, employer_name, employer_name_confidence,
+                occupation_category, occupation_category_confidence,
                 filing_id, tax_year, filing_date, 
                 avg_gross_pay, gross_pay_confidence,
                 avg_net_pay, net_pay_confidence,
                 avg_tax_deductions, income_band, 
                 annualized_income, annualized_net_pay, annualized_tax_deductions,
                 payslip_count, gross_pay_count, net_pay_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 user.user_id, user.employee_name, user.employee_name_confidence,
                 user.employer_name, user.employer_name_confidence,
+                user.occupation_category, user.occupation_category_confidence,
                 user.filing_id, user.tax_year, filing_date, 
                 user.avg_gross_pay, user.gross_pay_confidence,
                 user.avg_net_pay, user.net_pay_confidence,

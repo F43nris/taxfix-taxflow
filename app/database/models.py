@@ -53,6 +53,8 @@ class User(BaseModel):
     employee_name_confidence: Optional[float] = None
     employer_name: Optional[str] = None
     employer_name_confidence: Optional[float] = None
+    occupation_category: Optional[str] = None  # Combined department and position
+    occupation_category_confidence: Optional[float] = None
     
     # Filing information
     filing_id: str = Field(default_factory=lambda: f"F{uuid.uuid4().hex[:5].upper()}")
@@ -174,6 +176,12 @@ class User(BaseModel):
         if not self.employer_name and income_statement.employer_name:
             self.employer_name = income_statement.employer_name
             self.employer_name_confidence = income_statement.employer_name_confidence
+        
+        # Update occupation category if available in the income statement
+        if hasattr(income_statement, 'occupation_category') and income_statement.occupation_category:
+            if not self.occupation_category:
+                self.occupation_category = income_statement.occupation_category
+                self.occupation_category_confidence = getattr(income_statement, 'occupation_category_confidence', 0.0)
             
         if not self.filing_date and income_statement.pay_date:
             self.filing_date = income_statement.pay_date
@@ -491,6 +499,13 @@ class IncomeStatement(BaseModel):
             
             data["tax_items"] = tax_items
             
+        # Extract occupation data if available
+        if "occupation_data" in json_data:
+            occ_data = json_data["occupation_data"]
+            if "occupation_category" in occ_data and occ_data["occupation_category"]:
+                data["occupation_category"] = occ_data["occupation_category"]
+                data["occupation_category_confidence"] = occ_data["occupation_category_confidence"]
+            
         return cls(**data)
     
     @staticmethod
@@ -541,6 +556,11 @@ class IncomeStatement(BaseModel):
             "gross_pay_count": gross_pay_count,
             "net_pay_count": net_pay_count
         }
+        
+        # Add occupation category if available
+        if hasattr(self, 'occupation_category') and self.occupation_category:
+            user_data["occupation_category"] = self.occupation_category
+            user_data["occupation_category_confidence"] = getattr(self, 'occupation_category_confidence', 0.0)
         
         # Use existing user_id if provided
         if existing_user_id:

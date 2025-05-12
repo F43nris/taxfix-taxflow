@@ -6,6 +6,7 @@ import json
 import datetime
 import mimetypes
 from google.auth import default
+from google.protobuf.json_format import MessageToDict
 
 class DocumentAIProcessor:
     def __init__(self):
@@ -35,11 +36,18 @@ class DocumentAIProcessor:
         # Pre-trained processor IDs
         self.receipt_processor_id = os.environ.get("RECEIPT_PROCESSOR_ID")
         self.income_statement_processor_id = os.environ.get("INCOME_STATEMENT_PROCESSOR_ID")
+        self.occupation_processor_id = os.environ.get("OCCUPATION_CATEGORY_PROCESSOR_ID")
         
     def _get_processor_name(self, processor_id: str) -> str:
         """Get the fully qualified processor name."""
         return self.client.processor_path(
             self.project_id, self.location, processor_id
+        )
+    
+    def _get_processor_version_name(self, processor_id: str, version_id: str) -> str:
+        """Get the fully qualified processor version name."""
+        return self.client.processor_version_path(
+            self.project_id, self.location, processor_id, version_id
         )
     
     def _get_mime_type(self, file_path: str) -> str:
@@ -129,7 +137,7 @@ class DocumentAIProcessor:
         # Process the document
         processor_name = self._get_processor_name(processor_id)
         print(f"Calling Document AI endpoint: {processor_name}")
-        response = self.client.process_document(request=request, timeout=5)
+        response = self.client.process_document(request=request, timeout=30)
         document = response.document
         
         # Extract structured data
@@ -143,7 +151,106 @@ class DocumentAIProcessor:
             "page_count": len(document.pages)
         }
         
+        # Process for occupation category if it's a payslip
+        if document_type.lower() in ["income_statement", "income", "payslip"] and self.occupation_processor_id:
+            try:
+                occupation_data = self.process_for_occupation(file_path)
+                if occupation_data:
+                    # Add occupation data to the extracted data
+                    extracted_data["occupation_data"] = occupation_data
+            except Exception as e:
+                print(f"Warning: Failed to extract occupation data: {e}")
+        
         return extracted_data
+    
+    def process_for_occupation(self, file_path: str) -> Dict[str, Any]:
+        """
+        Process a document specifically for occupation category information.
+        Simply extract Department and Position from document text.
+        
+        Args:
+            file_path: Path to the document file
+            
+        Returns:
+            Dictionary containing the extracted occupation data
+        """
+        if not self.occupation_processor_id:
+            print("Warning: OCCUPATION_CATEGORY_PROCESSOR_ID not set in environment variables")
+            return {}
+            
+        # Read the file
+        with open(file_path, "rb") as file:
+            file_content = file.read()
+        
+        # Determine MIME type
+        mime_type = self._get_mime_type(file_path)
+        
+        try:
+            # Get processor name - let's use the base processor without specifying version
+            processor_name = self._get_processor_name(self.occupation_processor_id)
+            print(f"Calling Occupation Category processor: {processor_name}")
+            
+            # Configure the process request
+            request = documentai.ProcessRequest(
+                name=processor_name,
+                raw_document=documentai.RawDocument(
+                    content=file_content, mime_type=mime_type
+                )
+            )
+            
+            # Process the document
+            response = self.client.process_document(request=request, timeout=30)
+            
+            # Convert the entire protobuf response to a dictionary like test.py
+            full_response = MessageToDict(
+                response._pb,
+                preserving_proto_field_name=True,
+                use_integers_for_enums=False
+            )
+            
+            print("Full occupation processor response received")
+            
+            # Simply extract from the document text content - KISS approach
+            department = None
+            position = None
+            
+            # Get the full text from the document
+            if 'document' in full_response and 'text' in full_response['document']:
+                text = full_response['document']['text']
+                print(f"First 200 chars of document text: {text[:200]}")
+                
+                # Look for Department and Position in the text
+                lines = text.split('\n')
+                for line in lines:
+                    if line.startswith('Department:'):
+                        department = line.replace('Department:', '').strip()
+                        print(f"Found department: {department}")
+                    elif line.startswith('Position:'):
+                        position = line.replace('Position:', '').strip()
+                        print(f"Found position: {position}")
+            
+            # Create the occupation category
+            occupation_category = None
+            if department and position:
+                occupation_category = f"{department}-{position}"
+            elif department:
+                occupation_category = department
+            elif position:
+                occupation_category = position
+                
+            # Keep a simplified approach without confidence scores
+            return {
+                "occupation_category": occupation_category,
+                "occupation_category_confidence": 1.0 if occupation_category else 0.0,
+                "department": department,
+                "department_confidence": 1.0 if department else 0.0,
+                "position": position,
+                "position_confidence": 1.0 if position else 0.0
+            }
+            
+        except Exception as e:
+            print(f"Error processing document for occupation: {str(e)}")
+            return {}
     
     def save_as_json(self, data: Dict[str, Any], output_path: str) -> str:
         """

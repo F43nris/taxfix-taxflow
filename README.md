@@ -1,4 +1,2 @@
 # taxfix-taxflow
 
-THOUGHTS
-! USE GOOGLE CLOUD FOR ENV VARIABLES?

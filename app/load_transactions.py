@@ -151,6 +151,8 @@ def query_examples(db_path: str = "app/data/db/transactions.db"):
             u.user_id,
             u.employer_name,
             u.employer_name_confidence,
+            u.occupation_category,
+            u.occupation_category_confidence,
             
             u.avg_gross_pay,
             u.gross_pay_confidence,
@@ -179,6 +181,11 @@ def query_examples(db_path: str = "app/data/db/transactions.db"):
             if user['employer_name']:
                 print(f"    Employer: {user['employer_name']} " + 
                       f"(confidence: {user['employer_name_confidence']:.2%})" if user['employer_name_confidence'] else "")
+            
+            # Display occupation category if available
+            if user['occupation_category']:
+                print(f"    Occupation: {user['occupation_category']} " +
+                      f"(confidence: {user['occupation_category_confidence']:.2%})" if user['occupation_category_confidence'] else "")
             
             # Display payslip counts
             print(f"    Analyzed {user['payslip_count']} payslip(s):")
