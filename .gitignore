@@ -179,3 +179,5 @@ app/data/*
 .DS_Store
 .idea/
 .vscode/
+
+notebooks/data/*
