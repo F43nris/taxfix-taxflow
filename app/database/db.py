@@ -68,20 +68,21 @@ class Database:
             employee_name_confidence REAL,
             employer_name TEXT,
             employer_name_confidence REAL,
-            occupation_category TEXT,
-            age_range TEXT,
-            family_status TEXT,
-            region TEXT,
             filing_id TEXT,
             tax_year INTEGER,
             filing_date TEXT,
-            total_income REAL,
-            total_income_confidence REAL,
-            total_deductions REAL,
-            refund_amount REAL,
+            avg_gross_pay REAL,
+            gross_pay_confidence REAL,
+            avg_net_pay REAL,
+            net_pay_confidence REAL,
+            avg_tax_deductions REAL,
             income_band TEXT,
             annualized_income REAL,
+            annualized_net_pay REAL,
+            annualized_tax_deductions REAL,
             payslip_count INTEGER DEFAULT 1,
+            gross_pay_count INTEGER DEFAULT 0,
+            net_pay_count INTEGER DEFAULT 0,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
         ''')
@@ -99,6 +100,10 @@ class Database:
             vendor TEXT,
             receipt_id TEXT,
             confidence_score REAL,
+            amount_confidence REAL,
+            date_confidence REAL,
+            vendor_confidence REAL,
+            category_confidence REAL,
             transaction_month INTEGER,
             quarter INTEGER,
             year INTEGER,
@@ -139,29 +144,32 @@ class Database:
                 employee_name_confidence = COALESCE(?, employee_name_confidence),
                 employer_name = COALESCE(?, employer_name),
                 employer_name_confidence = COALESCE(?, employer_name_confidence),
-                occupation_category = COALESCE(?, occupation_category),
-                age_range = COALESCE(?, age_range),
-                family_status = COALESCE(?, family_status),
-                region = COALESCE(?, region),
                 filing_id = COALESCE(?, filing_id),
                 tax_year = COALESCE(?, tax_year),
                 filing_date = COALESCE(?, filing_date),
-                total_income = COALESCE(?, total_income),
-                total_income_confidence = COALESCE(?, total_income_confidence),
-                total_deductions = COALESCE(?, total_deductions),
-                refund_amount = COALESCE(?, refund_amount),
+                avg_gross_pay = COALESCE(?, avg_gross_pay),
+                gross_pay_confidence = COALESCE(?, gross_pay_confidence),
+                avg_net_pay = COALESCE(?, avg_net_pay),
+                net_pay_confidence = COALESCE(?, net_pay_confidence),
+                avg_tax_deductions = COALESCE(?, avg_tax_deductions),
                 income_band = COALESCE(?, income_band),
                 annualized_income = COALESCE(?, annualized_income),
-                payslip_count = COALESCE(?, payslip_count)
+                annualized_net_pay = COALESCE(?, annualized_net_pay),
+                annualized_tax_deductions = COALESCE(?, annualized_tax_deductions),
+                payslip_count = COALESCE(?, payslip_count),
+                gross_pay_count = COALESCE(?, gross_pay_count),
+                net_pay_count = COALESCE(?, net_pay_count)
             WHERE user_id = ?
             ''', (
                 user.employee_name, user.employee_name_confidence,
                 user.employer_name, user.employer_name_confidence,
-                user.occupation_category, user.age_range, user.family_status, user.region,
                 user.filing_id, user.tax_year, filing_date,
-                user.total_income, user.total_income_confidence,
-                user.total_deductions, user.refund_amount, user.income_band,
-                user.annualized_income, user.payslip_count,
+                user.avg_gross_pay, user.gross_pay_confidence,
+                user.avg_net_pay, user.net_pay_confidence,
+                user.avg_tax_deductions,
+                user.income_band,
+                user.annualized_income, user.annualized_net_pay, user.annualized_tax_deductions,
+                user.payslip_count, user.gross_pay_count, user.net_pay_count,
                 user.user_id
             ))
         else:
@@ -172,16 +180,22 @@ class Database:
             self.cursor.execute('''
             INSERT INTO users (
                 user_id, employee_name, employee_name_confidence, employer_name, employer_name_confidence,
-                occupation_category, age_range, family_status, region,
-                filing_id, tax_year, filing_date, total_income, total_income_confidence,
-                total_deductions, refund_amount, income_band, annualized_income, payslip_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                filing_id, tax_year, filing_date, 
+                avg_gross_pay, gross_pay_confidence,
+                avg_net_pay, net_pay_confidence,
+                avg_tax_deductions, income_band, 
+                annualized_income, annualized_net_pay, annualized_tax_deductions,
+                payslip_count, gross_pay_count, net_pay_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 user.user_id, user.employee_name, user.employee_name_confidence,
                 user.employer_name, user.employer_name_confidence,
-                user.occupation_category, user.age_range, user.family_status, user.region,
-                user.filing_id, user.tax_year, filing_date, user.total_income, user.total_income_confidence,
-                user.total_deductions, user.refund_amount, user.income_band, user.annualized_income, user.payslip_count
+                user.filing_id, user.tax_year, filing_date, 
+                user.avg_gross_pay, user.gross_pay_confidence,
+                user.avg_net_pay, user.net_pay_confidence,
+                user.avg_tax_deductions, user.income_band,
+                user.annualized_income, user.annualized_net_pay, user.annualized_tax_deductions,
+                user.payslip_count, user.gross_pay_count, user.net_pay_count
             ))
         
         self.conn.commit()
@@ -237,12 +251,15 @@ class Database:
         INSERT INTO transactions (
             transaction_id, user_id, transaction_date, amount, category, subcategory,
             description, vendor, receipt_id, confidence_score,
+            amount_confidence, date_confidence, vendor_confidence, category_confidence,
             transaction_month, quarter, year
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             transaction.transaction_id, transaction.user_id, transaction_date, transaction.amount,
             transaction.category, transaction.subcategory, transaction.description, transaction.vendor,
             transaction.receipt_id, transaction.confidence_score,
+            transaction.amount_confidence, transaction.date_confidence, 
+            transaction.vendor_confidence, transaction.category_confidence,
             transaction.transaction_month, transaction.quarter, transaction.year
         ))
         

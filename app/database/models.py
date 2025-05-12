@@ -51,10 +51,6 @@ class User(BaseModel):
     # Profile information
     employee_name: Optional[str] = None
     employee_name_confidence: Optional[float] = None
-    occupation_category: str = "IT Professional"
-    age_range: str = "25-35"
-    family_status: str = "Single"
-    region: str = "Hamburg"
     employer_name: Optional[str] = None
     employer_name_confidence: Optional[float] = None
     
@@ -62,20 +58,31 @@ class User(BaseModel):
     filing_id: str = Field(default_factory=lambda: f"F{uuid.uuid4().hex[:5].upper()}")
     tax_year: int = datetime.now().year - 1
     filing_date: Optional[datetime] = None
-    total_income: Optional[float] = None
-    total_income_confidence: Optional[float] = None
-    total_deductions: Optional[float] = None
-    refund_amount: Optional[float] = None
+    
+    # Income and pay information - focusing on averages only
+    avg_gross_pay: Optional[float] = None  # Average monthly gross pay
+    gross_pay_confidence: Optional[float] = None
+    avg_net_pay: Optional[float] = None    # Average monthly net pay
+    net_pay_confidence: Optional[float] = None
+    
+    # Calculated tax deductions (difference between gross and net)
+    avg_tax_deductions: Optional[float] = None
     
     # Additional calculated fields
     income_band: Optional[str] = None
-    annualized_income: Optional[float] = None
-    payslip_count: int = 1  # Number of payslips used to calculate income
+    annualized_income: Optional[float] = None  # Projected annual gross income
+    annualized_net_pay: Optional[float] = None  # Projected annual net income
+    annualized_tax_deductions: Optional[float] = None  # Projected annual tax deductions
+    payslip_count: int = 1  # Number of payslips processed
+    
+    # Tracking for average calculations
+    gross_pay_count: int = 0  # Number of payslips with valid gross pay
+    net_pay_count: int = 0    # Number of payslips with valid net pay
     
     @validator('income_band', always=True)
     def set_income_band(cls, v, values):
-        if v is None and 'total_income' in values and values['total_income']:
-            income = values['total_income']
+        if v is None and 'annualized_income' in values and values['annualized_income']:
+            income = values['annualized_income']
             if income < 20000:
                 return "A: 0-20,000 €"
             elif income < 50000:
@@ -85,23 +92,79 @@ class User(BaseModel):
             else:
                 return "D: 100,001+ €"
         return v
+    
+    @validator('avg_tax_deductions', always=True)
+    def calculate_tax_deductions(cls, v, values):
+        """Calculate average tax deductions as difference between gross and net pay"""
+        if v is None and 'avg_gross_pay' in values and values['avg_gross_pay'] and 'avg_net_pay' in values and values['avg_net_pay']:
+            # Only calculate if we have both values
+            return values['avg_gross_pay'] - values['avg_net_pay']
+        return v
         
     @validator('annualized_income', always=True)
     def calculate_annualized_income(cls, v, values):
-        if v is None and 'total_income' in values and values['total_income'] and 'payslip_count' in values:
-            # Calculate annualized income based on available payslips
-            monthly_income = values['total_income'] / values['payslip_count']
-            return monthly_income * 12
+        # Use average gross pay to calculate annual income if available
+        if v is None and 'avg_gross_pay' in values and values['avg_gross_pay']:
+            return values['avg_gross_pay'] * 12
+        return v
+    
+    @validator('annualized_net_pay', always=True)
+    def calculate_annualized_net_pay(cls, v, values):
+        # Use average net pay to calculate annual net income if available
+        if v is None and 'avg_net_pay' in values and values['avg_net_pay']:
+            return values['avg_net_pay'] * 12
+        return v
+    
+    @validator('annualized_tax_deductions', always=True)
+    def calculate_annualized_tax_deductions(cls, v, values):
+        # Use average tax deductions to calculate annual tax deductions if available
+        if v is None and 'avg_tax_deductions' in values and values['avg_tax_deductions']:
+            return values['avg_tax_deductions'] * 12
         return v
     
     def update_from_income_statement(self, income_statement):
         """Update user with data from a new income statement"""
-        # If we already have income data, update cumulative fields
-        if self.total_income and income_statement.gross_earnings:
-            self.total_income += income_statement.gross_earnings
-            self.payslip_count += 1
-        elif income_statement.gross_earnings:
-            self.total_income = income_statement.gross_earnings
+        self.payslip_count += 1
+        
+        # Update gross pay information
+        if income_statement.gross_earnings is not None:
+            self.gross_pay_count += 1
+            
+            # Update average gross pay
+            if self.avg_gross_pay:
+                # Recalculate the average
+                total_gross = self.avg_gross_pay * (self.gross_pay_count - 1)
+                total_gross += income_statement.gross_earnings
+                self.avg_gross_pay = total_gross / self.gross_pay_count
+            else:
+                self.avg_gross_pay = income_statement.gross_earnings
+            
+            # Update gross pay confidence
+            if income_statement.gross_earnings_confidence:
+                if self.gross_pay_confidence:
+                    self.gross_pay_confidence = (self.gross_pay_confidence + income_statement.gross_earnings_confidence) / 2
+                else:
+                    self.gross_pay_confidence = income_statement.gross_earnings_confidence
+        
+        # Update net pay information
+        if income_statement.net_pay is not None:
+            self.net_pay_count += 1
+            
+            # Update average net pay
+            if self.avg_net_pay:
+                # Recalculate the average
+                total_net = self.avg_net_pay * (self.net_pay_count - 1)
+                total_net += income_statement.net_pay
+                self.avg_net_pay = total_net / self.net_pay_count
+            else:
+                self.avg_net_pay = income_statement.net_pay
+            
+            # Update net pay confidence
+            if income_statement.net_pay_confidence:
+                if self.net_pay_confidence:
+                    self.net_pay_confidence = (self.net_pay_confidence + income_statement.net_pay_confidence) / 2
+                else:
+                    self.net_pay_confidence = income_statement.net_pay_confidence
             
         # Update fields if they are not set yet
         if not self.employee_name and income_statement.employee_name:
@@ -116,10 +179,20 @@ class User(BaseModel):
             self.filing_date = income_statement.pay_date
             
         # Recalculate derived fields
-        self.income_band = self.set_income_band(None, {'total_income': self.total_income})
-        self.annualized_income = self.calculate_annualized_income(None, 
-                                                                {'total_income': self.total_income, 
-                                                                 'payslip_count': self.payslip_count})
+        self.annualized_income = self.calculate_annualized_income(None, {
+            'avg_gross_pay': self.avg_gross_pay,
+        })
+        self.annualized_net_pay = self.calculate_annualized_net_pay(None, {
+            'avg_net_pay': self.avg_net_pay,
+        })
+        self.income_band = self.set_income_band(None, {'annualized_income': self.annualized_income})
+        self.avg_tax_deductions = self.calculate_tax_deductions(None, {
+            'avg_gross_pay': self.avg_gross_pay,
+            'avg_net_pay': self.avg_net_pay
+        })
+        self.annualized_tax_deductions = self.calculate_annualized_tax_deductions(None, {
+            'avg_tax_deductions': self.avg_tax_deductions
+        })
 
 
 class Transaction(BaseModel):
@@ -136,6 +209,12 @@ class Transaction(BaseModel):
     # Source data details
     receipt_id: str  # ID of source receipt
     confidence_score: float  # Average confidence score
+    
+    # Individual field confidence scores
+    amount_confidence: Optional[float] = None
+    date_confidence: Optional[float] = None
+    vendor_confidence: Optional[float] = None
+    category_confidence: Optional[float] = None
     
     # Derived fields for analytics
     transaction_month: Optional[int] = None
@@ -309,6 +388,20 @@ class Receipt(BaseModel):
                 category = "Food & Dining"
                 subcategory = "Groceries"
         
+        # Get specific field confidences
+        amount_confidence = self.total_amount_confidence
+        date_confidence = self.invoice_date_confidence
+        vendor_confidence = self.supplier_name_confidence
+        category_confidence = self.invoice_type_confidence
+        
+        # Format confidence details for description
+        confidence_details = []
+        for field_name, confidence in valid_confidence:
+            if confidence is not None:
+                confidence_details.append(f"{field_name}: {confidence:.2%}")
+        
+        description = f"Fields: {confidence_field_names}\nConfidence details: {', '.join(confidence_details)}"
+        
         # Create transaction
         return Transaction(
             user_id=user_id,
@@ -316,10 +409,15 @@ class Receipt(BaseModel):
             amount=self.total_amount or 0,
             category=category,
             subcategory=subcategory,
-            description=f"Confidence from fields: {confidence_field_names}",
+            description=description,
             vendor=self.supplier_name,
             receipt_id=self.id,
-            confidence_score=avg_confidence
+            confidence_score=avg_confidence,
+            # Individual confidences
+            amount_confidence=amount_confidence,
+            date_confidence=date_confidence,
+            vendor_confidence=vendor_confidence,
+            category_confidence=category_confidence
         )
 
 
@@ -423,16 +521,25 @@ class IncomeStatement(BaseModel):
         # Default tax year is based on pay date
         tax_year = self.pay_date.year if self.pay_date else datetime.now().year
         
+        # Determine which values are valid
+        gross_pay_count = 1 if self.gross_earnings is not None else 0
+        net_pay_count = 1 if self.net_pay is not None else 0
+        
         # Create user data
         user_data = {
             "employee_name": self.employee_name,
             "employee_name_confidence": self.employee_name_confidence,
             "employer_name": self.employer_name,
             "employer_name_confidence": self.employer_name_confidence,
-            "total_income": self.gross_earnings_ytd,
-            "total_income_confidence": self.gross_earnings_ytd_confidence,
+            "avg_gross_pay": self.gross_earnings if gross_pay_count > 0 else None,
+            "gross_pay_confidence": self.gross_earnings_confidence,
+            "avg_net_pay": self.net_pay if net_pay_count > 0 else None,
+            "net_pay_confidence": self.net_pay_confidence,
             "filing_date": self.pay_date or datetime.now(),
-            "tax_year": tax_year
+            "tax_year": tax_year,
+            "payslip_count": 1,  # Each income statement represents one payslip
+            "gross_pay_count": gross_pay_count,
+            "net_pay_count": net_pay_count
         }
         
         # Use existing user_id if provided
