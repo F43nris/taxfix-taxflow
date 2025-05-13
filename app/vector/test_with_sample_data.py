@@ -5,7 +5,8 @@ Test script to demonstrate the vector search functionality with sample data.
 import os
 import sys
 import json
-from typing import Dict, Any, List
+import sqlite3
+from typing import Dict, Any, List, Tuple
 
 # Add the parent directory to the path to allow imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -14,7 +15,7 @@ from app.vector.client import get_weaviate_client
 from app.vector.schema import create_schema, delete_schema
 from app.vector.upsert import add_or_update_user, add_or_update_transaction
 from app.vector.search import search_similar_users, search_similar_transactions, search_transactions_for_user
-from app.vector.data_loader import get_sample_data, get_user_by_id, get_transaction_by_id
+from app.vector.data_loader import get_user_by_id, get_transaction_by_id
 from app.vector.search_api import TaxInsightSearchAPI
 
 def print_separator():
@@ -63,9 +64,123 @@ def print_transaction(tx: Dict[str, Any]):
         if tx.get("deduction_category"):
             print(f"Deduction Category: {tx.get('deduction_category')}")
 
+def get_input_data() -> Tuple[List[Dict], List[Dict]]:
+    """
+    Get input data from the transactions database created by main.py.
+    This represents real input data from newly processed documents.
+    """
+    # Path to the transactions database created by main.py
+    db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "db", "transactions.db")
+    
+    if not os.path.exists(db_path):
+        print(f"Input database not found at {db_path}")
+        print("Make sure to run main.py first to process documents and create the database.")
+        return [], []
+    
+    print(f"Loading input data from {db_path}")
+    
+    input_users = []
+    input_transactions = []
+    
+    try:
+        # Connect to the SQLite database
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Get users from the database
+        cursor.execute("SELECT * FROM users LIMIT 3")
+        user_rows = cursor.fetchall()
+        for i, row in enumerate(user_rows):
+            user_dict = dict(row)
+            # Create a modified copy with a new user_id to ensure separation from historical data
+            original_id = user_dict.get('user_id', 'Unknown ID')
+            user_dict['user_id'] = f"INPUT-USER-{i+1}-FROM-{original_id}"
+            user_dict['original_user_id'] = original_id  # Keep the original ID for reference
+            
+            input_users.append(user_dict)
+            print(f"Loaded input user: {user_dict.get('user_id')} (originally {original_id})")
+        
+        # Get transactions from the database
+        cursor.execute("SELECT * FROM transactions LIMIT 5")
+        tx_rows = cursor.fetchall()
+        for i, row in enumerate(tx_rows):
+            tx_dict = dict(row)
+            # Update transaction to use the new user ID if it belongs to one of our input users
+            original_user_id = tx_dict.get('user_id')
+            for user in input_users:
+                if user.get('original_user_id') == original_user_id:
+                    tx_dict['user_id'] = user.get('user_id')
+                    break
+            
+            # Also assign a new transaction ID to ensure complete separation
+            original_tx_id = tx_dict.get('transaction_id', 'Unknown ID')
+            tx_dict['transaction_id'] = f"INPUT-TX-{i+1}-FROM-{original_tx_id}"
+            tx_dict['original_transaction_id'] = original_tx_id  # Keep the original ID for reference
+            
+            input_transactions.append(tx_dict)
+            print(f"Loaded input transaction: {tx_dict.get('transaction_id')} (originally {original_tx_id})")
+        
+        conn.close()
+        
+    except Exception as e:
+        print(f"Error loading input data: {e}")
+    
+    return input_users, input_transactions
+
+def get_historical_data() -> Tuple[List[Dict], List[Dict]]:
+    """
+    Get historical data ONLY from tax_insights.db.
+    This ensures proper separation from input data in transactions.db.
+    """
+    # Path to the enriched database created by process_enriched_data.py
+    db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "db", "tax_insights.db")
+    
+    if not os.path.exists(db_path):
+        print(f"Historical database not found at {db_path}")
+        print("Make sure to run process_enriched_data.py first to create the enriched database.")
+        return [], []
+    
+    print(f"Loading historical data from {db_path}")
+    
+    historical_users = []
+    historical_transactions = []
+    
+    try:
+        # Connect to the SQLite database
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Get users from the enriched database
+        cursor.execute("SELECT * FROM enriched_users LIMIT 10")
+        user_rows = cursor.fetchall()
+        for row in user_rows:
+            user_dict = dict(row)
+            historical_users.append(user_dict)
+            print(f"Loaded historical user: {user_dict.get('user_id', 'Unknown ID')}")
+        
+        # Get transactions from the enriched database
+        cursor.execute("SELECT * FROM enriched_transactions LIMIT 20")
+        tx_rows = cursor.fetchall()
+        for row in tx_rows:
+            tx_dict = dict(row)
+            historical_transactions.append(tx_dict)
+            print(f"Loaded historical transaction: {tx_dict.get('transaction_id', 'Unknown ID')}")
+        
+        conn.close()
+        
+    except Exception as e:
+        print(f"Error loading historical data: {e}")
+    
+    return historical_users, historical_transactions
+
 def setup_vector_db():
-    """Set up the vector database with sample data."""
-    print("Setting up vector database...")
+    """
+    Set up the vector database with historical data.
+    This simulates the enriched historical data in a real RAG system.
+    """
+    print("Setting up vector database with historical data...")
     
     # Connect to Weaviate
     client = get_weaviate_client()
@@ -81,52 +196,53 @@ def setup_vector_db():
     create_schema(client)
     print("Created schema")
     
-    # Load sample data
-    users, transactions = get_sample_data()
+    # Load historical data ONLY from enriched database (tax_insights.db)
+    historical_users, historical_transactions = get_historical_data()
     
-    print(f"Loaded {len(users)} users and {len(transactions)} transactions from SQLite databases")
+    print(f"Loaded {len(historical_users)} historical users and {len(historical_transactions)} historical transactions")
     
-    # Add users to Weaviate
-    for user in users:
+    # Add historical users to Weaviate
+    for user in historical_users:
         add_or_update_user(client, user)
-        print(f"Added user {user.get('user_id')} to Weaviate")
+        print(f"Added historical user {user.get('user_id')} to Weaviate")
     
-    # Add transactions to Weaviate
-    for tx in transactions:
+    # Add historical transactions to Weaviate
+    for tx in historical_transactions:
         add_or_update_transaction(client, tx)
-        print(f"Added transaction {tx.get('transaction_id')} to Weaviate")
+        print(f"Added historical transaction {tx.get('transaction_id')} to Weaviate")
     
-    print("Vector database setup complete!")
+    print("Vector database setup complete with historical data!")
     return client
 
-def test_similarity_searches(client):
-    """Test similarity searches."""
+def test_similarity_searches(client, input_users, input_transactions):
+    """
+    Test similarity searches using real input data to query historical data.
+    This simulates the real-world scenario where new documents query for similar historical records.
+    """
     print_separator()
-    print("TESTING SIMILARITY SEARCHES")
+    print("TESTING SIMILARITY SEARCHES WITH REAL INPUT DATA")
     print_separator()
     
-    # Get the first user
-    users, _ = get_sample_data()
-    if not users:
-        print("No users found in sample data!")
+    if not input_users:
+        print("No input users available for testing!")
         return
     
-    test_user = users[0]
-    print("Test User:")
+    # 1. Find similar users using the first input user
+    test_user = input_users[0]
+    print("Input User:")
     print_user(test_user)
     print_separator()
     
-    # 1. Find similar users
-    print("Finding similar users...")
+    print("Finding similar historical users...")
     similar_users = search_similar_users(
         client,
         user_data=test_user,
         limit=3
     )
     
-    print(f"Found {len(similar_users)} similar users:")
+    print(f"Found {len(similar_users)} similar historical users:")
     for i, user_result in enumerate(similar_users):
-        print(f"\nSimilar User {i+1}:")
+        print(f"\nSimilar Historical User {i+1}:")
         user_id = user_result.data.get("user_id")
         user_data = get_user_by_id(user_id) if user_id else user_result.data
         if user_data:
@@ -135,27 +251,26 @@ def test_similarity_searches(client):
     
     print_separator()
     
-    # 2. Find similar transactions
-    _, transactions = get_sample_data()
-    if not transactions:
-        print("No transactions found in sample data!")
+    # 2. Find similar transactions using the first input transaction
+    if not input_transactions:
+        print("No input transactions available for testing!")
         return
     
-    test_tx = transactions[0]
-    print("Test Transaction:")
+    test_tx = input_transactions[0]
+    print("Input Transaction:")
     print_transaction(test_tx)
     print_separator()
     
-    print("Finding similar transactions...")
+    print("Finding similar historical transactions...")
     similar_txs = search_similar_transactions(
         client,
         transaction_data=test_tx,
         limit=3
     )
     
-    print(f"Found {len(similar_txs)} similar transactions:")
+    print(f"Found {len(similar_txs)} similar historical transactions:")
     for i, tx_result in enumerate(similar_txs):
-        print(f"\nSimilar Transaction {i+1}:")
+        print(f"\nSimilar Historical Transaction {i+1}:")
         tx_id = tx_result.data.get("transaction_id")
         tx_data = get_transaction_by_id(tx_id) if tx_id else tx_result.data
         if tx_data:
@@ -165,82 +280,39 @@ def test_similarity_searches(client):
     print_separator()
     
     # 3. Find transactions for user
-    print("Finding transactions for user...")
+    print("Finding historical transactions similar to input user's profile...")
     user_txs = search_transactions_for_user(
         client,
         user_data=test_user,
         limit=3
     )
     
-    print(f"Found {len(user_txs)} transactions for user:")
+    print(f"Found {len(user_txs)} relevant historical transactions:")
     for i, tx_result in enumerate(user_txs):
-        print(f"\nTransaction {i+1} for User:")
+        print(f"\nRelevant Historical Transaction {i+1}:")
         tx_id = tx_result.data.get("transaction_id")
         tx_data = get_transaction_by_id(tx_id) if tx_id else tx_result.data
         if tx_data:
             tx_data["similarity_score"] = tx_result.similarity
             print_transaction(tx_data)
 
-def test_search_api():
-    """Test the high-level search API."""
-    print_separator()
-    print("TESTING SEARCH API")
-    print_separator()
-    
-    # Create API instance
-    api = TaxInsightSearchAPI()
-    
-    # Get the first user
-    users, _ = get_sample_data()
-    if not users:
-        print("No users found in sample data!")
-        return
-    
-    test_user = users[0]
-    user_id = test_user.get("user_id")
-    
-    print(f"Getting tax recommendations for user {user_id}...")
-    recommendations = api.get_tax_recommendations(user_id)
-    
-    if "error" in recommendations:
-        print(f"Error: {recommendations['error']}")
-        return
-    
-    # Print user profile
-    print("\nUser Profile:")
-    print_user(recommendations["user_profile"])
-    
-    # Print transaction count
-    print(f"\nTransaction Count: {recommendations['transaction_count']}")
-    
-    # Print similar users
-    print(f"\nSimilar Users ({len(recommendations['similar_users'])}):")
-    for i, user in enumerate(recommendations['similar_users'][:3]):  # Show top 3
-        print(f"\nSimilar User {i+1}:")
-        print_user(user)
-    
-    # Print potential deductions
-    print(f"\nPotential Deductions ({len(recommendations['potential_deductions'])}):")
-    for i, tx in enumerate(recommendations['potential_deductions'][:3]):  # Show top 3
-        print(f"\nPotential Deduction {i+1}:")
-        print_transaction(tx)
-    
-    # Print recommendations
-    if recommendations.get("cluster_recommendation"):
-        print(f"\nRecommendation: {recommendations.get('cluster_recommendation')}")
-    
-    if recommendations.get("uplift_message"):
-        print(f"\nUplift Message: {recommendations.get('uplift_message')}")
-
 def main():
     """Main function."""
-    print("VECTOR SEARCH TEST WITH SAMPLE DATA")
+    print("VECTOR SEARCH TEST WITH REAL DATA FLOW")
     print_separator()
     
-    # Setup vector database
+    # Setup vector database with historical data
     client = setup_vector_db()
     if not client:
         print("Failed to set up vector database!")
+        return 1
+    
+    # Get real input data from database created by main.py
+    input_users, input_transactions = get_input_data()
+    
+    if not input_users or not input_transactions:
+        print("ERROR: No input data found in transactions.db")
+        print("Please run main.py first to process documents and create the database.")
         return 1
     
     # Wait a bit for indexing to complete
@@ -248,11 +320,8 @@ def main():
     print("Waiting for indexing to complete...")
     time.sleep(3)
     
-    # Test similarity searches
-    test_similarity_searches(client)
-    
-    # Test search API
-    test_search_api()
+    # Test similarity searches with input data querying historical data
+    test_similarity_searches(client, input_users, input_transactions)
     
     print_separator()
     print("Test completed!")
