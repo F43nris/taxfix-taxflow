@@ -25,28 +25,6 @@ def get_user_class_definition() -> Dict[str, Any]:
             },
             # Profile information
             {
-                "name": "employee_name",
-                "dataType": ["string"],
-                "description": "Name of the employee",
-                "indexInverted": True,
-            },
-            {
-                "name": "employee_name_confidence",
-                "dataType": ["number"],
-                "description": "Confidence score for employee name extraction",
-            },
-            {
-                "name": "employer_name",
-                "dataType": ["string"],
-                "description": "Name of the employer",
-                "indexInverted": True,
-            },
-            {
-                "name": "employer_name_confidence",
-                "dataType": ["number"],
-                "description": "Confidence score for employer name extraction",
-            },
-            {
                 "name": "occupation_category",
                 "dataType": ["string"],
                 "description": "Occupation category of the user",
@@ -103,12 +81,6 @@ def get_user_class_definition() -> Dict[str, Any]:
                 "description": "Average monthly tax deductions",
             },
             # Calculated fields
-            {
-                "name": "income_band",
-                "dataType": ["string"],
-                "description": "Income band of the user",
-                "indexInverted": True,
-            },
             {
                 "name": "annualized_income",
                 "dataType": ["number"],

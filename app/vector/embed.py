@@ -106,12 +106,6 @@ def prepare_user_text(user_data: Dict[str, Any]) -> str:
     text_parts = []
     
     # Add user information
-    if user_data.get("employee_name"):
-        text_parts.append(f"Employee name: {user_data['employee_name']}")
-    
-    if user_data.get("employer_name"):
-        text_parts.append(f"Employer: {user_data['employer_name']}")
-    
     if user_data.get("occupation_category"):
         text_parts.append(f"Occupation: {user_data['occupation_category']}")
     
@@ -128,8 +122,8 @@ def prepare_user_text(user_data: Dict[str, Any]) -> str:
     if user_data.get("annualized_income"):
         text_parts.append(f"Annual income: {user_data['annualized_income']:.2f}")
     
-    if user_data.get("income_band"):
-        text_parts.append(f"Income band: {user_data['income_band']}")
+    if user_data.get("annualized_tax_deductions"):
+        text_parts.append(f"Annual tax deductions: {user_data['annualized_tax_deductions']:.2f}")
     
     # Join all parts with newlines
     return "\n".join(text_parts)

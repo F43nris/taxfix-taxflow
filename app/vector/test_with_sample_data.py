@@ -25,11 +25,17 @@ def print_separator():
 def print_user(user: Dict[str, Any]):
     """Print user information in a readable format."""
     print(f"User ID: {user.get('user_id')}")
-    print(f"Name: {user.get('employee_name', 'N/A')}")
-    print(f"Employer: {user.get('employer_name', 'N/A')}")
     print(f"Occupation: {user.get('occupation_category', 'N/A')}")
-    print(f"Income Band: {user.get('income_band', 'N/A')}")
-    print(f"Annual Income: {user.get('annualized_income', 'N/A')}")
+    
+    # For input users, use annualized fields; for historical users, use total fields
+    if user.get('user_id', '').startswith('INPUT-USER-'):
+        # Input user from transactions.db
+        print(f"Annual Income: {user.get('annualized_income', 'N/A')}")
+        print(f"Annual Tax Deductions: {user.get('annualized_tax_deductions', 'N/A')}")
+    else:
+        # Historical user from tax_insights.db
+        print(f"Total Income: {user.get('total_income', 'N/A')}")
+        print(f"Total Tax Deductions: {user.get('total_deductions', 'N/A')}")
     
     # Print similarity score if available
     if "similarity_score" in user:

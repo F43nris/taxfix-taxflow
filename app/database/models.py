@@ -49,10 +49,6 @@ class User(BaseModel):
     user_id: str = Field(default_factory=lambda: f"U{uuid.uuid4().hex[:4].upper()}")
     
     # Profile information
-    employee_name: Optional[str] = None
-    employee_name_confidence: Optional[float] = None
-    employer_name: Optional[str] = None
-    employer_name_confidence: Optional[float] = None
     occupation_category: Optional[str] = None  # Combined department and position
     occupation_category_confidence: Optional[float] = None
     
@@ -71,7 +67,6 @@ class User(BaseModel):
     avg_tax_deductions: Optional[float] = None
     
     # Additional calculated fields
-    income_band: Optional[str] = None
     annualized_income: Optional[float] = None  # Projected annual gross income
     annualized_net_pay: Optional[float] = None  # Projected annual net income
     annualized_tax_deductions: Optional[float] = None  # Projected annual tax deductions
@@ -80,20 +75,6 @@ class User(BaseModel):
     # Tracking for average calculations
     gross_pay_count: int = 0  # Number of payslips with valid gross pay
     net_pay_count: int = 0    # Number of payslips with valid net pay
-    
-    @validator('income_band', always=True)
-    def set_income_band(cls, v, values):
-        if v is None and 'annualized_income' in values and values['annualized_income']:
-            income = values['annualized_income']
-            if income < 20000:
-                return "A: 0-20,000 €"
-            elif income < 50000:
-                return "B: 20,001-50,000 €"
-            elif income < 100000:
-                return "C: 51,131-100,000 €"
-            else:
-                return "D: 100,001+ €"
-        return v
     
     @validator('avg_tax_deductions', always=True)
     def calculate_tax_deductions(cls, v, values):
@@ -167,21 +148,19 @@ class User(BaseModel):
                     self.net_pay_confidence = (self.net_pay_confidence + income_statement.net_pay_confidence) / 2
                 else:
                     self.net_pay_confidence = income_statement.net_pay_confidence
-            
-        # Update fields if they are not set yet
-        if not self.employee_name and income_statement.employee_name:
-            self.employee_name = income_statement.employee_name
-            self.employee_name_confidence = income_statement.employee_name_confidence
-            
-        if not self.employer_name and income_statement.employer_name:
-            self.employer_name = income_statement.employer_name
-            self.employer_name_confidence = income_statement.employer_name_confidence
         
         # Update occupation category if available in the income statement
+        print(f"[DEBUG-USER] Checking for occupation_category in income statement")
         if hasattr(income_statement, 'occupation_category') and income_statement.occupation_category:
+            print(f"[DEBUG-USER] Found occupation_category in income statement: {income_statement.occupation_category}")
             if not self.occupation_category:
+                print(f"[DEBUG-USER] Setting occupation_category: {income_statement.occupation_category}")
                 self.occupation_category = income_statement.occupation_category
                 self.occupation_category_confidence = getattr(income_statement, 'occupation_category_confidence', 0.0)
+            else:
+                print(f"[DEBUG-USER] User already has occupation_category: {self.occupation_category}, not updating")
+        else:
+            print(f"[DEBUG-USER] No occupation_category found in income statement or it's NULL - keeping existing value")
             
         if not self.filing_date and income_statement.pay_date:
             self.filing_date = income_statement.pay_date
@@ -193,7 +172,6 @@ class User(BaseModel):
         self.annualized_net_pay = self.calculate_annualized_net_pay(None, {
             'avg_net_pay': self.avg_net_pay,
         })
-        self.income_band = self.set_income_band(None, {'annualized_income': self.annualized_income})
         self.avg_tax_deductions = self.calculate_tax_deductions(None, {
             'avg_gross_pay': self.avg_gross_pay,
             'avg_net_pay': self.avg_net_pay
@@ -433,12 +411,8 @@ class IncomeStatement(BaseModel):
     """Model for income statements/payslips"""
     id: str = Field(default_factory=lambda: f"IS{uuid.uuid4().hex[:8].upper()}")
     file_path: str
-    employee_name: Optional[str] = None
-    employee_name_confidence: Optional[float] = None
     employee_address: Optional[str] = None
     employee_address_confidence: Optional[float] = None
-    employer_name: Optional[str] = None
-    employer_name_confidence: Optional[float] = None
     pay_date: Optional[datetime] = None
     pay_date_confidence: Optional[float] = None
     gross_earnings: Optional[float] = None
@@ -449,6 +423,8 @@ class IncomeStatement(BaseModel):
     net_pay_confidence: Optional[float] = None
     net_pay_ytd: Optional[float] = None
     net_pay_ytd_confidence: Optional[float] = None
+    occupation_category: Optional[str] = None
+    occupation_category_confidence: Optional[float] = None
     tax_items: List[TaxItem] = []
     metadata: Metadata
 
@@ -467,8 +443,7 @@ class IncomeStatement(BaseModel):
         }
         
         # Extract fields with confidence
-        for field in ["employee_name", "employee_address", "employer_name", "gross_earnings", 
-                     "gross_earnings_ytd", "net_pay", "net_pay_ytd"]:
+        for field in ["employee_address", "gross_earnings", "gross_earnings_ytd", "net_pay", "net_pay_ytd"]:
             if field in json_data:
                 data[field] = cls._extract_value(json_data[field])
                 data[f"{field}_confidence"] = json_data[field]["confidence"]
@@ -501,10 +476,16 @@ class IncomeStatement(BaseModel):
             
         # Extract occupation data if available
         if "occupation_data" in json_data:
+            print(f"[DEBUG-MODEL] Found occupation_data in JSON: {json_data['occupation_data']}")
             occ_data = json_data["occupation_data"]
             if "occupation_category" in occ_data and occ_data["occupation_category"]:
                 data["occupation_category"] = occ_data["occupation_category"]
                 data["occupation_category_confidence"] = occ_data["occupation_category_confidence"]
+                print(f"[DEBUG-MODEL] Set occupation_category to: {data['occupation_category']}")
+            else:
+                print(f"[DEBUG-MODEL] No occupation_category found in occupation_data")
+        else:
+            print(f"[DEBUG-MODEL] No occupation_data found in income statement JSON")
             
         return cls(**data)
     
@@ -542,10 +523,7 @@ class IncomeStatement(BaseModel):
         
         # Create user data
         user_data = {
-            "employee_name": self.employee_name,
-            "employee_name_confidence": self.employee_name_confidence,
-            "employer_name": self.employer_name,
-            "employer_name_confidence": self.employer_name_confidence,
+            "user_id": existing_user_id,
             "avg_gross_pay": self.gross_earnings if gross_pay_count > 0 else None,
             "gross_pay_confidence": self.gross_earnings_confidence,
             "avg_net_pay": self.net_pay if net_pay_count > 0 else None,
@@ -558,12 +536,12 @@ class IncomeStatement(BaseModel):
         }
         
         # Add occupation category if available
+        print(f"[DEBUG-TO-USER] Self has occupation_category?: {hasattr(self, 'occupation_category')}")
         if hasattr(self, 'occupation_category') and self.occupation_category:
+            print(f"[DEBUG-TO-USER] Adding occupation_category to user: {self.occupation_category}")
             user_data["occupation_category"] = self.occupation_category
-            user_data["occupation_category_confidence"] = getattr(self, 'occupation_category_confidence', 0.0)
-        
-        # Use existing user_id if provided
-        if existing_user_id:
-            user_data["user_id"] = existing_user_id
+            user_data["occupation_category_confidence"] = self.occupation_category_confidence or 0.0
+        else:
+            print(f"[DEBUG-TO-USER] No occupation_category to add to user")
         
         return User(**user_data) 

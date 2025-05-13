@@ -64,10 +64,6 @@ class Database:
         self.cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY,
-            employee_name TEXT,
-            employee_name_confidence REAL,
-            employer_name TEXT,
-            employer_name_confidence REAL,
             occupation_category TEXT,
             occupation_category_confidence REAL,
             filing_id TEXT,
@@ -78,7 +74,6 @@ class Database:
             avg_net_pay REAL,
             net_pay_confidence REAL,
             avg_tax_deductions REAL,
-            income_band TEXT,
             annualized_income REAL,
             annualized_net_pay REAL,
             annualized_tax_deductions REAL,
@@ -118,7 +113,6 @@ class Database:
         self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id)')
         self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category)')
         self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(transaction_date)')
-        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_income_band ON users(income_band)')
         
         self.conn.commit()
     
@@ -132,6 +126,11 @@ class Database:
         Returns:
             ID of the inserted user
         """
+        # Debug user object
+        print(f"[DEBUG-INSERT] User object has occupation_category: {hasattr(user, 'occupation_category')}")
+        if hasattr(user, 'occupation_category'):
+            print(f"[DEBUG-INSERT] User occupation_category value: {user.occupation_category}")
+        
         # Check if user already exists
         self.cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user.user_id,))
         existing = self.cursor.fetchone()
@@ -140,14 +139,12 @@ class Database:
             # Convert datetime objects to ISO format strings
             filing_date = user.filing_date.isoformat() if user.filing_date else None
             
+            print(f"[DEBUG-INSERT] Updating user {user.user_id} with occupation_category: {user.occupation_category}")
+            
             self.cursor.execute('''
             UPDATE users SET
-                employee_name = COALESCE(?, employee_name),
-                employee_name_confidence = COALESCE(?, employee_name_confidence),
-                employer_name = COALESCE(?, employer_name),
-                employer_name_confidence = COALESCE(?, employer_name_confidence),
-                occupation_category = COALESCE(?, occupation_category),
-                occupation_category_confidence = COALESCE(?, occupation_category_confidence),
+                occupation_category = ?,
+                occupation_category_confidence = ?,
                 filing_id = COALESCE(?, filing_id),
                 tax_year = COALESCE(?, tax_year),
                 filing_date = COALESCE(?, filing_date),
@@ -156,7 +153,6 @@ class Database:
                 avg_net_pay = COALESCE(?, avg_net_pay),
                 net_pay_confidence = COALESCE(?, net_pay_confidence),
                 avg_tax_deductions = COALESCE(?, avg_tax_deductions),
-                income_band = COALESCE(?, income_band),
                 annualized_income = COALESCE(?, annualized_income),
                 annualized_net_pay = COALESCE(?, annualized_net_pay),
                 annualized_tax_deductions = COALESCE(?, annualized_tax_deductions),
@@ -165,14 +161,12 @@ class Database:
                 net_pay_count = COALESCE(?, net_pay_count)
             WHERE user_id = ?
             ''', (
-                user.employee_name, user.employee_name_confidence,
-                user.employer_name, user.employer_name_confidence,
-                user.occupation_category, user.occupation_category_confidence,
+                user.occupation_category,  # Direct assignment, not using COALESCE
+                user.occupation_category_confidence,  # Direct assignment, not using COALESCE
                 user.filing_id, user.tax_year, filing_date,
                 user.avg_gross_pay, user.gross_pay_confidence,
                 user.avg_net_pay, user.net_pay_confidence,
                 user.avg_tax_deductions,
-                user.income_band,
                 user.annualized_income, user.annualized_net_pay, user.annualized_tax_deductions,
                 user.payslip_count, user.gross_pay_count, user.net_pay_count,
                 user.user_id
@@ -182,30 +176,35 @@ class Database:
             # Convert datetime objects to ISO format strings
             filing_date = user.filing_date.isoformat() if user.filing_date else None
             
+            print(f"[DEBUG-INSERT] Inserting new user {user.user_id} with occupation_category: {user.occupation_category}")
+            
             self.cursor.execute('''
             INSERT INTO users (
-                user_id, employee_name, employee_name_confidence, employer_name, employer_name_confidence,
-                occupation_category, occupation_category_confidence,
+                user_id, occupation_category, occupation_category_confidence,
                 filing_id, tax_year, filing_date, 
                 avg_gross_pay, gross_pay_confidence,
                 avg_net_pay, net_pay_confidence,
-                avg_tax_deductions, income_band, 
-                annualized_income, annualized_net_pay, annualized_tax_deductions,
+                avg_tax_deductions, annualized_income, 
+                annualized_net_pay, annualized_tax_deductions,
                 payslip_count, gross_pay_count, net_pay_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                user.user_id, user.employee_name, user.employee_name_confidence,
-                user.employer_name, user.employer_name_confidence,
-                user.occupation_category, user.occupation_category_confidence,
+                user.user_id, user.occupation_category, user.occupation_category_confidence,
                 user.filing_id, user.tax_year, filing_date, 
                 user.avg_gross_pay, user.gross_pay_confidence,
                 user.avg_net_pay, user.net_pay_confidence,
-                user.avg_tax_deductions, user.income_band,
-                user.annualized_income, user.annualized_net_pay, user.annualized_tax_deductions,
+                user.avg_tax_deductions, user.annualized_income,
+                user.annualized_net_pay, user.annualized_tax_deductions,
                 user.payslip_count, user.gross_pay_count, user.net_pay_count
             ))
         
         self.conn.commit()
+        
+        # Verify the data was inserted correctly
+        self.cursor.execute("SELECT occupation_category FROM users WHERE user_id = ?", (user.user_id,))
+        result = self.cursor.fetchone()
+        print(f"[DEBUG-INSERT] After insert/update, database has occupation_category: {result[0] if result else 'None'}")
+        
         return user.user_id
     
     def get_or_create_user(self, user_id: str = None) -> str:
@@ -312,11 +311,24 @@ class Database:
         Returns:
             ID of the inserted/updated user
         """
+        print(f"[DEBUG-DB] Processing income statement: {json_file_path}")
+        
         with open(json_file_path, 'r') as f:
             json_data = json.load(f)
         
+        # DEBUG: Check for occupation data in the JSON
+        if "occupation_data" in json_data:
+            print(f"[DEBUG-DB] Found occupation data in {json_file_path}: {json_data['occupation_data']}")
+        else:
+            print(f"[DEBUG-DB] No occupation data found in {json_file_path}")
+        
         # Create IncomeStatement model
         income_stmt = IncomeStatement.from_json(json_data, json_file_path)
+        
+        # DEBUG: Check if occupation category was extracted to the model
+        print(f"[DEBUG-DB] Income statement model has occupation_category: {hasattr(income_stmt, 'occupation_category')}")
+        if hasattr(income_stmt, 'occupation_category'):
+            print(f"[DEBUG-DB] Occupation category value: {income_stmt.occupation_category}")
         
         # Check if user exists
         if user_id:
@@ -333,17 +345,35 @@ class Database:
                 # Create User object from existing data
                 user = User(**user_dict)
                 
+                # DEBUG: Check user before update
+                print(f"[DEBUG-DB] User before update - occupation_category: {user.occupation_category}")
+                
                 # Update with new income statement data
                 user.update_from_income_statement(income_stmt)
+                
+                # DEBUG: Check user after update
+                print(f"[DEBUG-DB] User after update - occupation_category: {user.occupation_category}")
             else:
                 # Create new user with income statement data
                 user = income_stmt.to_user(user_id)
+                # DEBUG: Check new user
+                print(f"[DEBUG-DB] New user created - occupation_category: {user.occupation_category}")
         else:
             # Create new user with income statement data
             user = income_stmt.to_user(user_id)
+            # DEBUG: Check new user
+            print(f"[DEBUG-DB] New user created (no user_id) - occupation_category: {user.occupation_category}")
         
         # Insert or update user
         user_id = self.insert_user(user)
+        
+        # DEBUG: Verify in database after insert
+        self.cursor.execute("SELECT occupation_category FROM users WHERE user_id = ?", (user_id,))
+        db_result = self.cursor.fetchone()
+        if db_result:
+            print(f"[DEBUG-DB] After DB insert/update - occupation_category in database: {db_result['occupation_category']}")
+        else:
+            print(f"[DEBUG-DB] After DB insert/update - user not found in database!")
         
         return user_id
     
@@ -370,15 +400,52 @@ class Database:
         # Process income statements first to build user profile
         income_stmt_dir = os.path.join(processed_dir, "processed_income_statements")
         if os.path.exists(income_stmt_dir):
+            # First, collect and sort all income statement files
+            income_statements = []
             for file_name in os.listdir(income_stmt_dir):
                 if file_name.endswith(".json"):
+                    file_path = os.path.join(income_stmt_dir, file_name)
+                    # Read the file to check for occupation data
                     try:
-                        file_path = os.path.join(income_stmt_dir, file_name)
-                        self.process_income_statement_json(file_path, user_id)
-                        processed_counts["income_statements"] += 1
+                        with open(file_path, 'r') as f:
+                            json_data = json.load(f)
+                            # Check if it has occupation data
+                            has_occupation = False
+                            occupation_value = None
+                            if "occupation_data" in json_data and json_data["occupation_data"]:
+                                occupation_data = json_data["occupation_data"]
+                                if "occupation_category" in occupation_data and occupation_data["occupation_category"]:
+                                    has_occupation = True
+                                    occupation_value = occupation_data["occupation_category"]
+                            # Add to list with priority information
+                            income_statements.append({
+                                "file_path": file_path,
+                                "has_occupation": has_occupation,
+                                "occupation_value": occupation_value
+                            })
                     except Exception as e:
-                        print(f"Error processing income statement {file_name}: {str(e)}")
-                        processed_counts["errors"] += 1
+                        print(f"Error reading income statement {file_name}: {str(e)}")
+                        income_statements.append({
+                            "file_path": file_path,
+                            "has_occupation": False,
+                            "occupation_value": None
+                        })
+            
+            # Sort income statements - those with occupation data first
+            income_statements.sort(key=lambda x: (0 if x["has_occupation"] else 1, x["file_path"]))
+            
+            print(f"Processing income statements in this order:")
+            for i, stmt in enumerate(income_statements):
+                print(f"{i+1}. {os.path.basename(stmt['file_path'])} - Has occupation: {stmt['has_occupation']} - Value: {stmt['occupation_value']}")
+            
+            # Process in priority order
+            for stmt in income_statements:
+                try:
+                    self.process_income_statement_json(stmt["file_path"], user_id)
+                    processed_counts["income_statements"] += 1
+                except Exception as e:
+                    print(f"Error processing income statement {os.path.basename(stmt['file_path'])}: {str(e)}")
+                    processed_counts["errors"] += 1
         
         # Process receipts second to create transactions
         receipts_dir = os.path.join(processed_dir, "processed_receipts")

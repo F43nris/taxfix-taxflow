@@ -3,6 +3,7 @@ import argparse
 import sys
 from pathlib import Path
 import glob # Import glob
+import json # Add json for debugging
 
 # Add parent directory to path to import modules
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
@@ -116,6 +117,14 @@ def process_documents(input_dir: str, output_dir: str, doc_type: str):
         try:
             # Process the document
             result = processor.process_document(str(file), doc_type)
+            
+            # DEBUG: Check if occupation data is present in processed document
+            if doc_type.lower() in ["income_statement", "income", "payslip"]:
+                if "occupation_data" in result:
+                    print(f"✅ [DEBUG] Found occupation data in {file.name}: {result['occupation_data']}")
+                else:
+                    print(f"❌ [DEBUG] No occupation data found in {file.name}")
+            
             # Save results as JSON
             # Use output_path which is now absolute
             output_file = output_path / f"{file.stem}.json"
@@ -137,6 +146,22 @@ def process_and_load_to_database(processed_dir: str = "app/data/processed", run_
     print("LOADING DATA INTO DATABASE")
     print("="*80)
     
+    # DEBUG: Check for income statement files and their occupation data
+    income_stmt_dir = os.path.join(processed_dir, "processed_income_statements")
+    if os.path.exists(income_stmt_dir):
+        print(f"[DEBUG] Checking income statement files in {income_stmt_dir}")
+        for file_name in os.listdir(income_stmt_dir):
+            if file_name.endswith(".json"):
+                try:
+                    with open(os.path.join(income_stmt_dir, file_name), 'r') as f:
+                        json_data = json.load(f)
+                        if "occupation_data" in json_data:
+                            print(f"[DEBUG] {file_name} has occupation data: {json_data['occupation_data']}")
+                        else:
+                            print(f"[DEBUG] {file_name} has NO occupation data")
+                except Exception as e:
+                    print(f"[DEBUG] Error reading {file_name}: {e}")
+    
     # Create database directory if it doesn't exist
     db_dir = os.path.join(os.path.dirname(processed_dir), "db")
     os.makedirs(db_dir, exist_ok=True)
@@ -144,11 +169,45 @@ def process_and_load_to_database(processed_dir: str = "app/data/processed", run_
     # Set database path
     db_path = os.path.join(db_dir, "transactions.db")
     
+    # DEBUG: Check database schema before loading
+    print("[DEBUG] Checking database schema before loading data")
+    try:
+        import sqlite3
+        if os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(users)")
+            columns = cursor.fetchall()
+            print("[DEBUG] Users table columns:")
+            for col in columns:
+                print(f"[DEBUG]   {col[1]}: {col[2]}")
+            conn.close()
+    except Exception as e:
+        print(f"[DEBUG] Error checking database schema: {e}")
+    
     try:
         # Load transactions into database
+        print("[DEBUG] Starting load_transactions function")
         results = load_transactions(processed_dir)
         
         print(f"\nDatabase created at: {db_path}")
+        
+        # DEBUG: Check database after loading
+        print("[DEBUG] Checking database after loading data")
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            # Check users table
+            cursor.execute("SELECT user_id, occupation_category FROM users")
+            users = cursor.fetchall()
+            print(f"[DEBUG] Users in database after loading: {len(users)}")
+            for user in users:
+                print(f"[DEBUG]   User ID: {user[0]}, Occupation: {user[1] or 'None'}")
+                
+            conn.close()
+        except Exception as e:
+            print(f"[DEBUG] Error checking database after loading: {e}")
         
         # Run example queries if requested
         if run_examples:

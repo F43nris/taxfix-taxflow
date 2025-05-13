@@ -149,8 +149,6 @@ def query_examples(db_path: str = "app/data/db/transactions.db"):
         db.cursor.execute("""
         SELECT 
             u.user_id,
-            u.employer_name,
-            u.employer_name_confidence,
             u.occupation_category,
             u.occupation_category_confidence,
             
@@ -169,7 +167,6 @@ def query_examples(db_path: str = "app/data/db/transactions.db"):
             u.gross_pay_count,
             u.net_pay_count,
             
-            u.income_band,
             COUNT(t.transaction_id) as transaction_count
         FROM users u
         LEFT JOIN transactions t ON u.user_id = t.user_id
@@ -178,10 +175,6 @@ def query_examples(db_path: str = "app/data/db/transactions.db"):
         users = db.cursor.fetchall()
         for user in users:
             print(f"  User {user['user_id']}:")
-            if user['employer_name']:
-                print(f"    Employer: {user['employer_name']} " + 
-                      f"(confidence: {user['employer_name_confidence']:.2%})" if user['employer_name_confidence'] else "")
-            
             # Display occupation category if available
             if user['occupation_category']:
                 print(f"    Occupation: {user['occupation_category']} " +
@@ -211,7 +204,6 @@ def query_examples(db_path: str = "app/data/db/transactions.db"):
             if user['annualized_tax_deductions']:
                 print(f"    Projected Annual Tax Deductions: €{user['annualized_tax_deductions']:.2f}")
                 
-            print(f"    Income Band: {user['income_band'] or 'Not categorized'}")
             print(f"    Transactions: {user['transaction_count']}")
 
 
