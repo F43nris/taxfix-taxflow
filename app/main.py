@@ -6,6 +6,8 @@ from pathlib import Path
 import glob # Import glob
 import json # Add json for debugging
 import time
+import re
+from datetime import datetime
 
 # Add parent directory to path to import modules
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
@@ -22,6 +24,11 @@ from app.vector.schema import create_schema, delete_schema
 from app.vector.upsert import add_or_update_user, add_or_update_transaction
 from app.vector.search import search_similar_users, search_similar_transactions, search_transactions_for_user
 from app.vector.data_loader import get_user_by_id, get_transaction_by_id, fetch_users, fetch_transactions
+from app.vector.search_api import TaxInsightSearchAPI
+
+# Import semantic package instead of implementing it directly
+from app.semantic import search as semantic_search
+from app.semantic import run_example_semantic_queries
 
 def get_file_patterns(doc_type):
     """Get file patterns based on document type."""
@@ -551,7 +558,6 @@ def run_vector_search_pipeline(skip_ingestion=False):
                         print(f"Category: {tx_data.get('category', 'N/A')}")
                         if tx_data.get('subcategory'):
                             print(f"Subcategory: {tx_data.get('subcategory')}")
-                        print(f"Vendor: {tx_data.get('vendor', 'N/A')}")
                         print(f"Similarity Score: {tx_data.get('similarity_score'):.4f}")
                         
                         # Print deduction information if available
@@ -624,7 +630,6 @@ def run_vector_search_pipeline(skip_ingestion=False):
                     print(f"Category: {tx_data.get('category', 'N/A')}")
                     if tx_data.get('subcategory'):
                         print(f"Subcategory: {tx_data.get('subcategory')}")
-                    print(f"Vendor: {tx_data.get('vendor', 'N/A')}")
                     print(f"Similarity Score: {tx_data.get('similarity_score'):.4f}")
                     
                     # Print deduction information if available
@@ -691,8 +696,19 @@ def main():
         action="store_true",
         help="Run only the vector search pipeline, skipping document processing and database creation"
     )
+    parser.add_argument(
+        "--semantic-only", "-m",
+        action="store_true",
+        help="Run only the semantic search queries, skipping document processing and database creation"
+    )
 
     args = parser.parse_args()
+    
+    # If semantic-only mode is specified, skip to semantic search queries
+    if args.semantic_only:
+        print("Running in semantic-only mode - skipping document processing and database creation")
+        run_example_semantic_queries()
+        return
     
     # If vector-only mode is specified, skip to vector search pipeline
     if args.vector_only:
@@ -738,6 +754,10 @@ def main():
     # Run vector search pipeline
     if not args.skip_vector:
         run_vector_search_pipeline(skip_ingestion=args.skip_ingestion)
+
+    # Run example semantic queries if not skipped
+    if not args.skip_examples:
+        run_example_semantic_queries()
 
 if __name__ == "__main__":
     main()
