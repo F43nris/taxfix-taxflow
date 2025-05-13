@@ -16,17 +16,24 @@ def get_user_class_definition() -> Dict[str, Any]:
         "description": "User profile with payslip information",
         "vectorizer": "none",  # We'll provide our own vectors
         "properties": [
+            # Basic user identification
             {
                 "name": "user_id",
                 "dataType": ["string"],
                 "description": "Unique identifier for the user",
                 "indexInverted": True,
             },
+            # Profile information
             {
                 "name": "employee_name",
                 "dataType": ["string"],
                 "description": "Name of the employee",
                 "indexInverted": True,
+            },
+            {
+                "name": "employee_name_confidence",
+                "dataType": ["number"],
+                "description": "Confidence score for employee name extraction",
             },
             {
                 "name": "employer_name",
@@ -35,36 +42,27 @@ def get_user_class_definition() -> Dict[str, Any]:
                 "indexInverted": True,
             },
             {
+                "name": "employer_name_confidence",
+                "dataType": ["number"],
+                "description": "Confidence score for employer name extraction",
+            },
+            {
                 "name": "occupation_category",
                 "dataType": ["string"],
                 "description": "Occupation category of the user",
                 "indexInverted": True,
             },
             {
-                "name": "income_band",
+                "name": "occupation_category_confidence",
+                "dataType": ["number"],
+                "description": "Confidence score for occupation category",
+            },
+            # Filing information
+            {
+                "name": "filing_id",
                 "dataType": ["string"],
-                "description": "Income band of the user",
+                "description": "Filing identifier",
                 "indexInverted": True,
-            },
-            {
-                "name": "avg_gross_pay",
-                "dataType": ["number"],
-                "description": "Average monthly gross pay",
-            },
-            {
-                "name": "avg_net_pay",
-                "dataType": ["number"],
-                "description": "Average monthly net pay",
-            },
-            {
-                "name": "avg_tax_deductions",
-                "dataType": ["number"],
-                "description": "Average monthly tax deductions",
-            },
-            {
-                "name": "annualized_income",
-                "dataType": ["number"],
-                "description": "Projected annual gross income",
             },
             {
                 "name": "tax_year",
@@ -73,10 +71,134 @@ def get_user_class_definition() -> Dict[str, Any]:
                 "indexInverted": True,
             },
             {
+                "name": "filing_date",
+                "dataType": ["date"],
+                "description": "Date of filing",
+                "indexInverted": True,
+            },
+            # Income information
+            {
+                "name": "avg_gross_pay",
+                "dataType": ["number"],
+                "description": "Average monthly gross pay",
+            },
+            {
+                "name": "gross_pay_confidence",
+                "dataType": ["number"],
+                "description": "Confidence score for gross pay extraction",
+            },
+            {
+                "name": "avg_net_pay",
+                "dataType": ["number"],
+                "description": "Average monthly net pay",
+            },
+            {
+                "name": "net_pay_confidence",
+                "dataType": ["number"],
+                "description": "Confidence score for net pay extraction",
+            },
+            {
+                "name": "avg_tax_deductions",
+                "dataType": ["number"],
+                "description": "Average monthly tax deductions",
+            },
+            # Calculated fields
+            {
+                "name": "income_band",
+                "dataType": ["string"],
+                "description": "Income band of the user",
+                "indexInverted": True,
+            },
+            {
+                "name": "annualized_income",
+                "dataType": ["number"],
+                "description": "Projected annual gross income",
+            },
+            {
+                "name": "annualized_net_pay",
+                "dataType": ["number"],
+                "description": "Projected annual net income",
+            },
+            {
+                "name": "annualized_tax_deductions",
+                "dataType": ["number"],
+                "description": "Projected annual tax deductions",
+            },
+            {
                 "name": "payslip_count",
                 "dataType": ["int"],
                 "description": "Number of payslips processed",
             },
+            {
+                "name": "gross_pay_count",
+                "dataType": ["int"],
+                "description": "Number of payslips with valid gross pay",
+            },
+            {
+                "name": "net_pay_count",
+                "dataType": ["int"],
+                "description": "Number of payslips with valid net pay",
+            },
+            # Enriched fields from EnrichedUser
+            {
+                "name": "age_range",
+                "dataType": ["string"],
+                "description": "Age range of the user",
+                "indexInverted": True,
+            },
+            {
+                "name": "family_status",
+                "dataType": ["string"],
+                "description": "Family status of the user",
+                "indexInverted": True,
+            },
+            {
+                "name": "region",
+                "dataType": ["string"],
+                "description": "Geographic region of the user",
+                "indexInverted": True,
+            },
+            {
+                "name": "total_income",
+                "dataType": ["number"],
+                "description": "Total income for the tax year",
+            },
+            {
+                "name": "total_deductions",
+                "dataType": ["number"],
+                "description": "Total deductions for the tax year",
+            },
+            {
+                "name": "refund_amount",
+                "dataType": ["number"],
+                "description": "Tax refund amount",
+            },
+            # Recommendation fields
+            {
+                "name": "cluster_recommendation",
+                "dataType": ["string"],
+                "description": "Tax recommendation based on user cluster",
+                "indexInverted": True,
+            },
+            {
+                "name": "cluster_confidence_level",
+                "dataType": ["string"],
+                "description": "Confidence level for cluster recommendation",
+                "indexInverted": True,
+            },
+            {
+                "name": "uplift_message",
+                "dataType": ["string"],
+                "description": "Uplift insight message for the user",
+                "indexInverted": True,
+            },
+            {
+                "name": "uplift_confidence_level",
+                "dataType": ["string"],
+                "description": "Confidence level for uplift insight",
+                "indexInverted": True,
+            },
+            # Vector metadata
             {
                 "name": "embedding_model",
                 "dataType": ["string"],
@@ -96,6 +218,7 @@ def get_transaction_class_definition() -> Dict[str, Any]:
         "description": "Transaction data from receipts",
         "vectorizer": "none",  # We'll provide our own vectors
         "properties": [
+            # Basic transaction identification
             {
                 "name": "transaction_id",
                 "dataType": ["string"],
@@ -114,6 +237,7 @@ def get_transaction_class_definition() -> Dict[str, Any]:
                 "description": "ID of the source receipt",
                 "indexInverted": True,
             },
+            # Transaction details
             {
                 "name": "transaction_date",
                 "dataType": ["date"],
@@ -149,6 +273,28 @@ def get_transaction_class_definition() -> Dict[str, Any]:
                 "description": "Vendor name",
                 "indexInverted": True,
             },
+            # Confidence scores
+            {
+                "name": "confidence_score",
+                "dataType": ["number"],
+                "description": "Overall confidence score for the transaction",
+            },
+            {
+                "name": "amount_confidence",
+                "dataType": ["number"],
+                "description": "Confidence score for amount extraction",
+            },
+            {
+                "name": "vendor_confidence",
+                "dataType": ["number"],
+                "description": "Confidence score for vendor extraction",
+            },
+            {
+                "name": "category_confidence",
+                "dataType": ["number"],
+                "description": "Confidence score for category extraction",
+            },
+            # Time-based fields
             {
                 "name": "year",
                 "dataType": ["int"],
@@ -167,11 +313,43 @@ def get_transaction_class_definition() -> Dict[str, Any]:
                 "description": "Quarter of the transaction",
                 "indexInverted": True,
             },
+            # Enriched fields from EnrichedTransaction
             {
-                "name": "confidence_score",
-                "dataType": ["number"],
-                "description": "Overall confidence score for the transaction",
+                "name": "occupation_category",
+                "dataType": ["string"],
+                "description": "Occupation category of the user",
+                "indexInverted": True,
             },
+            {
+                "name": "family_status",
+                "dataType": ["string"],
+                "description": "Family status of the user",
+                "indexInverted": True,
+            },
+            {
+                "name": "is_deductible",
+                "dataType": ["boolean"],
+                "description": "Whether the transaction is tax deductible",
+                "indexInverted": True,
+            },
+            {
+                "name": "deduction_confidence_score",
+                "dataType": ["number"],
+                "description": "Confidence score for deduction classification",
+            },
+            {
+                "name": "deduction_recommendation",
+                "dataType": ["string"],
+                "description": "Recommendation for tax deduction",
+                "indexInverted": True,
+            },
+            {
+                "name": "deduction_category",
+                "dataType": ["string"],
+                "description": "Category of tax deduction",
+                "indexInverted": True,
+            },
+            # Vector metadata
             {
                 "name": "embedding_model",
                 "dataType": ["string"],
