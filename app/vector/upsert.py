@@ -5,7 +5,6 @@ import uuid
 from typing import List, Dict, Any, Optional
 import time
 from datetime import datetime
-from weaviate.classes.data import DataObject
 
 from app.vector.settings import (
     USER_CLASS,
@@ -31,20 +30,43 @@ def add_or_update_user(client, user_data: Dict[str, Any], user_id: Optional[str]
     Returns:
         Weaviate object ID
     """
+    # Create a clean copy of the data to avoid modifying the original
+    clean_data = user_data.copy()
+    
     # Extract user ID from data if not provided
     if not user_id:
-        user_id = user_data.get("user_id")
+        user_id = clean_data.get("user_id")
         if not user_id:
             raise ValueError("User ID not provided and not found in user_data")
     
+    # Handle date conversion for Weaviate
+    if "filing_date" in clean_data:
+        if isinstance(clean_data["filing_date"], datetime):
+            # Format date as RFC3339 with timezone
+            clean_data["filing_date"] = clean_data["filing_date"].replace(microsecond=0).isoformat() + "Z"
+        elif isinstance(clean_data["filing_date"], str):
+            try:
+                # Try to parse the date string
+                if "T" not in clean_data["filing_date"]:
+                    # If it's just a date without time, add time component
+                    date_obj = datetime.fromisoformat(clean_data["filing_date"].replace("Z", ""))
+                    clean_data["filing_date"] = f"{date_obj.strftime('%Y-%m-%dT00:00:00')}Z"
+                elif not clean_data["filing_date"].endswith("Z"):
+                    # If it has time but no timezone, add Z
+                    clean_data["filing_date"] = clean_data["filing_date"] + "Z"
+            except ValueError:
+                # If parsing fails, remove the field to avoid errors
+                print(f"Warning: Could not parse filing_date '{clean_data['filing_date']}' for user {user_id}, removing field")
+                del clean_data["filing_date"]
+    
     # Prepare text for embedding
-    text = prepare_user_text(user_data)
+    text = prepare_user_text(clean_data)
     
     # Generate embedding
     vector = get_embedding(text)
     
     # Add embedding model information
-    user_data["embedding_model"] = EMBEDDING_MODEL
+    clean_data["embedding_model"] = EMBEDDING_MODEL
     
     # Generate a UUID based on user_id for consistent object IDs
     object_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"user-{user_id}"))
@@ -52,19 +74,16 @@ def add_or_update_user(client, user_data: Dict[str, Any], user_id: Optional[str]
     # Get the collection
     collection = client.collections.get(USER_CLASS)
     
-    # Create DataObject for v4 API
-    data_object = DataObject(
-        properties=user_data,
-        uuid=object_id,
-        vector=vector
-    )
-    
     # Check if object already exists
     try:
         existing = collection.query.fetch_object_by_id(object_id)
         if existing:
             # Update existing object
-            collection.data.replace(data_object)
+            collection.data.replace(
+                uuid=object_id,
+                properties=clean_data,
+                vector=vector
+            )
             print(f"Updated user {user_id} in Weaviate")
             return object_id
     except Exception:
@@ -73,7 +92,11 @@ def add_or_update_user(client, user_data: Dict[str, Any], user_id: Optional[str]
     
     # Create new object
     try:
-        collection.data.insert(data_object)
+        collection.data.insert(
+            properties=clean_data,
+            uuid=object_id,
+            vector=vector
+        )
         print(f"Added user {user_id} to Weaviate")
         return object_id
     except Exception as e:
@@ -105,6 +128,25 @@ def add_or_update_transaction(client, transaction_data: Dict[str, Any], transact
         if isinstance(clean_data["transaction_date"], datetime):
             # Format date as RFC3339 with timezone
             clean_data["transaction_date"] = clean_data["transaction_date"].replace(microsecond=0).isoformat() + "Z"
+        elif isinstance(clean_data["transaction_date"], str):
+            try:
+                # Try to parse the date string
+                if "T" not in clean_data["transaction_date"]:
+                    # If it's just a date without time, add time component
+                    date_obj = datetime.fromisoformat(clean_data["transaction_date"].replace("Z", ""))
+                    clean_data["transaction_date"] = f"{date_obj.strftime('%Y-%m-%dT00:00:00')}Z"
+                elif not clean_data["transaction_date"].endswith("Z"):
+                    # If it has time but no timezone, add Z
+                    clean_data["transaction_date"] = clean_data["transaction_date"] + "Z"
+            except ValueError:
+                # If parsing fails, remove the field to avoid errors
+                print(f"Warning: Could not parse transaction_date '{clean_data['transaction_date']}' for transaction {transaction_id}, removing field")
+                del clean_data["transaction_date"]
+    
+    # Convert boolean fields to strings
+    if "is_deductible" in clean_data:
+        if isinstance(clean_data["is_deductible"], (bool, int, float)):
+            clean_data["is_deductible"] = str(clean_data["is_deductible"]).lower()
     
     # Convert confidence values to strings if they're defined as text in the schema
     # or remove them if they're not defined in the schema
@@ -134,19 +176,16 @@ def add_or_update_transaction(client, transaction_data: Dict[str, Any], transact
     # Get the collection
     collection = client.collections.get(TRANSACTION_CLASS)
     
-    # Create DataObject for v4 API
-    data_object = DataObject(
-        properties=clean_data,
-        uuid=object_id,
-        vector=vector
-    )
-    
     # Check if object already exists
     try:
         existing = collection.query.fetch_object_by_id(object_id)
         if existing:
             # Update existing object
-            collection.data.replace(data_object)
+            collection.data.replace(
+                uuid=object_id,
+                properties=clean_data,
+                vector=vector
+            )
             print(f"Updated transaction {transaction_id} in Weaviate")
             return object_id
     except Exception:
@@ -155,7 +194,11 @@ def add_or_update_transaction(client, transaction_data: Dict[str, Any], transact
     
     # Create new object
     try:
-        collection.data.insert(data_object)
+        collection.data.insert(
+            properties=clean_data,
+            uuid=object_id,
+            vector=vector
+        )
         print(f"Added transaction {transaction_id} to Weaviate")
         return object_id
     except Exception as e:
@@ -184,38 +227,63 @@ def batch_add_users(client, users_data: List[Dict[str, Any]]) -> List[str]:
         batch_objects = []
         
         for user_data in batch:
+            # Create a clean copy of the data to avoid modifying the original
+            clean_data = user_data.copy()
+            
             # Extract user ID
-            user_id = user_data.get("user_id")
+            user_id = clean_data.get("user_id")
             if not user_id:
                 continue
             
+            # Handle date conversion for Weaviate
+            if "filing_date" in clean_data:
+                if isinstance(clean_data["filing_date"], datetime):
+                    # Format date as RFC3339 with timezone
+                    clean_data["filing_date"] = clean_data["filing_date"].replace(microsecond=0).isoformat() + "Z"
+                elif isinstance(clean_data["filing_date"], str):
+                    try:
+                        # Try to parse the date string
+                        if "T" not in clean_data["filing_date"]:
+                            # If it's just a date without time, add time component
+                            date_obj = datetime.fromisoformat(clean_data["filing_date"].replace("Z", ""))
+                            clean_data["filing_date"] = f"{date_obj.strftime('%Y-%m-%dT00:00:00')}Z"
+                        elif not clean_data["filing_date"].endswith("Z"):
+                            # If it has time but no timezone, add Z
+                            clean_data["filing_date"] = clean_data["filing_date"] + "Z"
+                    except ValueError:
+                        # If parsing fails, remove the field to avoid errors
+                        print(f"Warning: Could not parse filing_date '{clean_data['filing_date']}' for user {user_id}, removing field")
+                        del clean_data["filing_date"]
+            
             # Prepare text for embedding
-            text = prepare_user_text(user_data)
+            text = prepare_user_text(clean_data)
             
             # Generate embedding
             vector = get_embedding(text)
             
             # Add embedding model information
-            user_data["embedding_model"] = EMBEDDING_MODEL
+            clean_data["embedding_model"] = EMBEDDING_MODEL
             
             # Generate a UUID based on user_id for consistent object IDs
             object_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"user-{user_id}"))
             object_ids.append(object_id)
             
-            # Create DataObject for v4 API
-            data_object = DataObject(
-                properties=user_data,
-                uuid=object_id,
-                vector=vector
-            )
-            
-            # Add to batch
-            batch_objects.append(data_object)
+            # Add to batch using dictionary format
+            batch_objects.append({
+                "properties": clean_data,
+                "uuid": object_id,
+                "vector": vector
+            })
         
         # Insert batch
         if batch_objects:
             try:
-                collection.data.insert_many(batch_objects)
+                for obj in batch_objects:
+                    collection.data.insert(
+                        properties=obj["properties"],
+                        uuid=obj["uuid"],
+                        vector=obj["vector"]
+                    )
                 print(f"Added {len(batch_objects)} users to Weaviate")
             except Exception as e:
                 print(f"Error adding users batch to Weaviate: {str(e)}")
@@ -258,6 +326,25 @@ def batch_add_transactions(client, transactions_data: List[Dict[str, Any]]) -> L
                 if isinstance(clean_data["transaction_date"], datetime):
                     # Format date as RFC3339 with timezone
                     clean_data["transaction_date"] = clean_data["transaction_date"].replace(microsecond=0).isoformat() + "Z"
+                elif isinstance(clean_data["transaction_date"], str):
+                    try:
+                        # Try to parse the date string
+                        if "T" not in clean_data["transaction_date"]:
+                            # If it's just a date without time, add time component
+                            date_obj = datetime.fromisoformat(clean_data["transaction_date"].replace("Z", ""))
+                            clean_data["transaction_date"] = f"{date_obj.strftime('%Y-%m-%dT00:00:00')}Z"
+                        elif not clean_data["transaction_date"].endswith("Z"):
+                            # If it has time but no timezone, add Z
+                            clean_data["transaction_date"] = clean_data["transaction_date"] + "Z"
+                    except ValueError:
+                        # If parsing fails, remove the field to avoid errors
+                        print(f"Warning: Could not parse transaction_date '{clean_data['transaction_date']}' for transaction {transaction_id}, removing field")
+                        del clean_data["transaction_date"]
+            
+            # Convert boolean fields to strings
+            if "is_deductible" in clean_data:
+                if isinstance(clean_data["is_deductible"], (bool, int, float)):
+                    clean_data["is_deductible"] = str(clean_data["is_deductible"]).lower()
             
             # Convert confidence values to strings if they're defined as text in the schema
             # or remove them if they're not defined in the schema
@@ -285,20 +372,22 @@ def batch_add_transactions(client, transactions_data: List[Dict[str, Any]]) -> L
             object_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"transaction-{transaction_id}"))
             object_ids.append(object_id)
             
-            # Create DataObject for v4 API
-            data_object = DataObject(
-                properties=clean_data,
-                uuid=object_id,
-                vector=vector
-            )
-            
-            # Add to batch
-            batch_objects.append(data_object)
+            # Add to batch using dictionary format
+            batch_objects.append({
+                "properties": clean_data,
+                "uuid": object_id,
+                "vector": vector
+            })
         
         # Insert batch
         if batch_objects:
             try:
-                collection.data.insert_many(batch_objects)
+                for obj in batch_objects:
+                    collection.data.insert(
+                        properties=obj["properties"],
+                        uuid=obj["uuid"],
+                        vector=obj["vector"]
+                    )
                 print(f"Added {len(batch_objects)} transactions to Weaviate")
             except Exception as e:
                 print(f"Error adding transactions batch to Weaviate: {str(e)}")

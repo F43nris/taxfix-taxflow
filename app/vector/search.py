@@ -3,7 +3,7 @@ Search functionality for Weaviate vector database.
 """
 from typing import List, Dict, Any, Optional, Union
 import uuid
-from weaviate.classes.query import Filter
+from weaviate.classes.query import Filter, MetadataQuery
 
 from app.vector.settings import USER_CLASS, TRANSACTION_CLASS
 from app.vector.embed import get_embedding, prepare_user_text, prepare_transaction_text
@@ -58,36 +58,31 @@ def search_similar_users(
     # Get the collection
     collection = client.collections.get(USER_CLASS)
     
-    # Build query with filters if provided
-    where_filter = None
-    if filters:
-        where_filter = build_where_filter(filters)
+    # Build where filter if filters are provided
+    where_filter = build_where_filter(filters) if filters else None
     
     # Execute query
     try:
-        # Use the v4 API for near_vector search
-        query_builder = collection.query.near_vector(
+        from weaviate.classes.query import MetadataQuery
+        
+        # Use the v4 API for near_vector search - direct query
+        results = collection.query.near_vector(
             near_vector=query_vector,
+            filters=where_filter,  # pass filters directly
             limit=limit,
+            return_metadata=MetadataQuery(distance=True)
         )
         
-        # Apply filters if available
-        if where_filter:
-            query_builder = query_builder.with_where(where_filter)
-        
-        # Execute the query
-        results = query_builder.do()
-        
         # Process results
-        search_results = []
-        for item in results.objects:
-            # Create SearchResult object
-            search_results.append(SearchResult(
+        search_results = [
+            SearchResult(
                 object_id=item.uuid,
                 class_name=USER_CLASS,
                 data=item.properties,
                 distance=item.metadata.distance
-            ))
+            )
+            for item in results.objects
+        ]
         
         return search_results
     except Exception as e:
@@ -130,36 +125,31 @@ def search_similar_transactions(
     # Get the collection
     collection = client.collections.get(TRANSACTION_CLASS)
     
-    # Build query with filters if provided
-    where_filter = None
-    if filters:
-        where_filter = build_where_filter(filters)
+    # Build where filter if filters are provided
+    where_filter = build_where_filter(filters) if filters else None
     
     # Execute query
     try:
-        # Use the v4 API for near_vector search
-        query_builder = collection.query.near_vector(
+        from weaviate.classes.query import MetadataQuery
+        
+        # Use the v4 API for near_vector search - direct query
+        results = collection.query.near_vector(
             near_vector=query_vector,
+            filters=where_filter,  # pass filters directly
             limit=limit,
+            return_metadata=MetadataQuery(distance=True)
         )
         
-        # Apply filters if available
-        if where_filter:
-            query_builder = query_builder.with_where(where_filter)
-        
-        # Execute the query
-        results = query_builder.do()
-        
         # Process results
-        search_results = []
-        for item in results.objects:
-            # Create SearchResult object
-            search_results.append(SearchResult(
+        search_results = [
+            SearchResult(
                 object_id=item.uuid,
                 class_name=TRANSACTION_CLASS,
                 data=item.properties,
                 distance=item.metadata.distance
-            ))
+            )
+            for item in results.objects
+        ]
         
         return search_results
     except Exception as e:
@@ -254,6 +244,9 @@ def build_where_filter(filters: Dict[str, Any]) -> Filter:
         elif value is None:
             # For None values, use "IsNull" operator
             field_filter = Filter.by_property(name=field).is_null()
+        elif isinstance(value, bool):
+            # Convert boolean values to strings
+            field_filter = Filter.by_property(name=field).equal(str(value).lower())
         else:
             # For simple values, use "Equal" operator
             field_filter = Filter.by_property(name=field).equal(value)
