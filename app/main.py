@@ -1,15 +1,27 @@
 import os
 import argparse
 import sys
+import sqlite3
 from pathlib import Path
 import glob # Import glob
 import json # Add json for debugging
+import time
 
 # Add parent directory to path to import modules
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from app.ingestion.processor import DocumentAIProcessor
 from app.database.db import Database
 from app.load_transactions import load_transactions, query_examples
+
+# Import process_enriched_data functionality
+from app.batch.process_enriched_data import main as process_enriched_data
+
+# Import vector search components
+from app.vector.client import get_weaviate_client
+from app.vector.schema import create_schema, delete_schema
+from app.vector.upsert import add_or_update_user, add_or_update_transaction
+from app.vector.search import search_similar_users, search_similar_transactions, search_transactions_for_user
+from app.vector.data_loader import get_user_by_id, get_transaction_by_id, fetch_users, fetch_transactions
 
 def get_file_patterns(doc_type):
     """Get file patterns based on document type."""
@@ -172,7 +184,6 @@ def process_and_load_to_database(processed_dir: str = "app/data/processed", run_
     # DEBUG: Check database schema before loading
     print("[DEBUG] Checking database schema before loading data")
     try:
-        import sqlite3
         if os.path.exists(db_path):
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
@@ -219,6 +230,288 @@ def process_and_load_to_database(processed_dir: str = "app/data/processed", run_
     except Exception as e:
         print(f"❌ Error loading data into database: {e}")
 
+def process_enriched_historical_data():
+    """
+    Process enriched historical data to create tax_insights.db.
+    This is required for the RAG system to have a knowledge base.
+    """
+    print("\n" + "="*80)
+    print("PROCESSING ENRICHED HISTORICAL DATA")
+    print("="*80)
+    
+    # Check if tax_insights.db already exists
+    tax_insights_db = "app/data/db/tax_insights.db"
+    if os.path.exists(tax_insights_db):
+        print(f"Tax insights database already exists at: {tax_insights_db}")
+        # Check the number of records
+        try:
+            if os.path.exists(tax_insights_db):
+                conn = sqlite3.connect(tax_insights_db)
+                cursor = conn.cursor()
+                
+                cursor.execute("SELECT COUNT(*) FROM enriched_users")
+                user_count = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM enriched_transactions")
+                tx_count = cursor.fetchone()[0]
+                
+                print(f"Database contains {user_count} enriched users and {tx_count} enriched transactions")
+                conn.close()
+                
+                if user_count > 0:
+                    print("Database has records, skipping processing of enriched data")
+                    return
+                else:
+                    print("Database exists but is empty, processing enriched data...")
+                
+        except Exception as e:
+            print(f"Error checking tax_insights database: {e}")
+            print("Proceeding with processing enriched data...")
+    else:
+        print(f"Tax insights database does not exist, creating it...")
+    
+    # Call the process_enriched_data function to create the database
+    try:
+        process_enriched_data()
+        print("Successfully processed enriched historical data and created tax_insights.db")
+    except Exception as e:
+        print(f"Error processing enriched data: {e}")
+        print("This is a CRITICAL error. The RAG system needs historical data to work!")
+        print("Make sure the notebooks/data/full_joined_data.csv file exists and the paths are correct.")
+        sys.exit(1)
+
+def run_vector_search_pipeline(skip_ingestion=False):
+    """
+    Run the vector search pipeline to find similar users and transactions.
+    This integrates the functionality from test_with_sample_data.py but processes ALL data.
+    
+    Args:
+        skip_ingestion: If True, skip the data ingestion step and use existing data in Weaviate
+    """
+    print("\n" + "="*80)
+    print("RUNNING VECTOR SEARCH PIPELINE WITH ALL DATA")
+    print("="*80)
+    
+    # Check if tax_insights.db exists before proceeding
+    tax_insights_db = "app/data/db/tax_insights.db"
+    if not os.path.exists(tax_insights_db):
+        print(f"ERROR: Tax insights database not found at {tax_insights_db}")
+        print("You need to process the enriched historical data first.")
+        return
+    
+    # Connect to Weaviate
+    print("Connecting to Weaviate...")
+    client = get_weaviate_client()
+    if not client:
+        print("Failed to connect to Weaviate!")
+        return
+    
+    try:
+        # Ingest data into Weaviate if not skipping
+        if not skip_ingestion:
+            # Reset schema
+            try:
+                print("Deleting existing schema...")
+                delete_schema(client)
+            except Exception as e:
+                print(f"No schema to delete or error: {str(e)}")
+            
+            # Create schema
+            print("Creating schema...")
+            create_schema(client)
+            
+            # Load ALL historical data from tax_insights.db
+            print("Loading ALL historical data from tax_insights.db...")
+            historical_users = fetch_users(limit=1000000, user_id=None)  # High limit to get all users
+            print(f"Loaded {len(historical_users)} historical users")
+            
+            historical_transactions = fetch_transactions(limit=1000000)  # High limit to get all transactions
+            print(f"Loaded {len(historical_transactions)} historical transactions")
+            
+            # Add ALL historical users to Weaviate
+            print("Adding historical users to Weaviate...")
+            for i, user in enumerate(historical_users, 1):
+                add_or_update_user(client, user)
+                if i % 100 == 0 or i == len(historical_users):
+                    print(f"Progress: Added {i}/{len(historical_users)} historical users")
+            
+            # Add ALL historical transactions to Weaviate
+            print("Adding historical transactions to Weaviate...")
+            for i, tx in enumerate(historical_transactions, 1):
+                add_or_update_transaction(client, tx)
+                if i % 100 == 0 or i == len(historical_transactions):
+                    print(f"Progress: Added {i}/{len(historical_transactions)} historical transactions")
+        else:
+            print("Skipping data ingestion - using existing data in Weaviate")
+            
+        # Load ALL input users from transactions.db
+        print("Loading ALL input users from transactions.db...")
+        input_conn = sqlite3.connect("app/data/db/transactions.db")
+        input_conn.row_factory = sqlite3.Row
+        input_cursor = input_conn.cursor()
+        
+        # Get ALL users
+        input_cursor.execute("SELECT * FROM users")
+        input_users = [dict(row) for row in input_cursor.fetchall()]
+        
+        # Modify input user IDs to make them distinct for search
+        # This prevents users from finding themselves with perfect similarity
+        for user in input_users:
+            # Store original ID for reference and for finding transactions
+            user['original_user_id'] = user['user_id']
+            # Create a distinct ID for search
+            user['search_id'] = f"INPUT-{user['user_id']}"
+        
+        print(f"Loaded {len(input_users)} input users")
+        
+        # Get ALL transactions
+        input_cursor.execute("SELECT * FROM transactions")
+        input_transactions = [dict(row) for row in input_cursor.fetchall()]
+        print(f"Loaded {len(input_transactions)} input transactions")
+        
+        input_conn.close()
+        
+        # Wait for indexing to complete
+        print("Waiting for indexing to complete...")
+        time.sleep(5)
+        
+        # For each input user, find similar historical users
+        print("\nRUNNING SIMILARITY SEARCHES FOR ALL INPUT USERS")
+        for i, input_user in enumerate(input_users, 1):
+            # Print a separator for each user
+            print("\n" + "="*80)
+            print(f"INPUT USER {i}/{len(input_users)}")
+            print("="*80)
+            
+            # Print input user details in the same format as test_with_sample_data.py
+            print("Input User:")
+            print(f"User ID: {input_user['user_id']}")
+            print(f"Occupation: {input_user.get('occupation_category', 'N/A')}")
+            print(f"Annual Income: {input_user.get('annualized_income', 'N/A')}")
+            print(f"Annual Tax Deductions: {input_user.get('annualized_tax_deductions', 'N/A')}")
+            
+            print("\n" + "-"*80 + "\n")
+            
+            # Use a copy of the user with the search ID to prevent self-matching
+            search_user = input_user.copy()
+            search_user['user_id'] = search_user['search_id']
+            
+            print("Finding similar historical users...")
+            similar_users = search_similar_users(client, user_data=search_user, limit=5)
+            
+            print(f"Found {len(similar_users)} similar historical users:")
+            for j, user_result in enumerate(similar_users, 1):
+                print(f"\nSimilar Historical User {j}:")
+                user_id = user_result.data.get("user_id")
+                user_data = get_user_by_id(user_id) if user_id else user_result.data
+                if user_data:
+                    user_data["similarity_score"] = user_result.similarity
+                    # Print user using similar format as test_with_sample_data.py
+                    print(f"User ID: {user_data.get('user_id')}")
+                    print(f"Occupation: {user_data.get('occupation_category', 'N/A')}")
+                    print(f"Total Income: {user_data.get('total_income', 'N/A')}")
+                    print(f"Total Tax Deductions: {user_data.get('total_deductions', 'N/A')}")
+                    print(f"Similarity Score: {user_data.get('similarity_score'):.4f}")
+                    
+                    # Print recommendations if available
+                    if user_data.get("cluster_recommendation"):
+                        print(f"\nRecommendation: {user_data.get('cluster_recommendation')}")
+                    if user_data.get("uplift_message"):
+                        print(f"Uplift Message: {user_data.get('uplift_message')}")
+            
+            # Print a separator between searches
+            print("\n" + "-"*80)
+            
+            # Find similar transactions for this user's transactions
+            user_transactions = [tx for tx in input_transactions if tx.get('user_id') == input_user['original_user_id']]
+            if user_transactions:
+                print(f"\nFinding similar historical transactions for {len(user_transactions)} transactions of user {input_user['user_id']}...")
+                
+                for k, tx in enumerate(user_transactions, 1):
+                    print(f"\nInput Transaction {k}:")
+                    print(f"Transaction ID: {tx.get('transaction_id')}")
+                    print(f"Date: {tx.get('transaction_date', 'N/A')}")
+                    print(f"Amount: {tx.get('amount', 'N/A')}")
+                    print(f"Category: {tx.get('category', 'N/A')}")
+                    if tx.get('subcategory'):
+                        print(f"Subcategory: {tx.get('subcategory')}")
+                    print(f"Vendor: {tx.get('vendor', 'N/A')}")
+                    
+                    # Create a copy for search
+                    search_tx = tx.copy()
+                    search_tx['transaction_id'] = f"INPUT-{tx['transaction_id']}"
+                    
+                    print("\nFinding similar historical transactions...")
+                    similar_txs = search_similar_transactions(client, transaction_data=search_tx, limit=3)
+                    
+                    print(f"Found {len(similar_txs)} similar historical transactions:")
+                    for l, tx_result in enumerate(similar_txs, 1):
+                        print(f"\nSimilar Historical Transaction {l}:")
+                        tx_id = tx_result.data.get("transaction_id")
+                        tx_data = get_transaction_by_id(tx_id) if tx_id else tx_result.data
+                        if tx_data:
+                            tx_data["similarity_score"] = tx_result.similarity
+                            # Print transaction details
+                            print(f"Transaction ID: {tx_data.get('transaction_id')}")
+                            print(f"User ID: {tx_data.get('user_id', 'N/A')}")
+                            print(f"Date: {tx_data.get('transaction_date', 'N/A')}")
+                            print(f"Amount: {tx_data.get('amount', 'N/A')}")
+                            print(f"Category: {tx_data.get('category', 'N/A')}")
+                            if tx_data.get('subcategory'):
+                                print(f"Subcategory: {tx_data.get('subcategory')}")
+                            print(f"Vendor: {tx_data.get('vendor', 'N/A')}")
+                            print(f"Similarity Score: {tx_data.get('similarity_score'):.4f}")
+                            
+                            # Print deduction information if available
+                            if tx_data.get("is_deductible"):
+                                print(f"Deductible: {tx_data.get('is_deductible')}")
+                                if tx_data.get("deduction_recommendation"):
+                                    print(f"Deduction Recommendation: {tx_data.get('deduction_recommendation')}")
+                                if tx_data.get("deduction_category"):
+                                    print(f"Deduction Category: {tx_data.get('deduction_category')}")
+                
+                # Now find transactions that might be relevant based on the user profile
+                print("\n" + "-"*80)
+                print(f"\nFinding historical transactions similar to {input_user['user_id']}'s profile...")
+                
+                relevant_txs = search_transactions_for_user(client, user_data=search_user, limit=3)
+                
+                print(f"Found {len(relevant_txs)} relevant historical transactions:")
+                for m, tx_result in enumerate(relevant_txs, 1):
+                    print(f"\nRelevant Historical Transaction {m}:")
+                    tx_id = tx_result.data.get("transaction_id")
+                    tx_data = get_transaction_by_id(tx_id) if tx_id else tx_result.data
+                    if tx_data:
+                        tx_data["similarity_score"] = tx_result.similarity
+                        # Print transaction details
+                        print(f"Transaction ID: {tx_data.get('transaction_id')}")
+                        print(f"User ID: {tx_data.get('user_id', 'N/A')}")
+                        print(f"Date: {tx_data.get('transaction_date', 'N/A')}")
+                        print(f"Amount: {tx_data.get('amount', 'N/A')}")
+                        print(f"Category: {tx_data.get('category', 'N/A')}")
+                        if tx_data.get('subcategory'):
+                            print(f"Subcategory: {tx_data.get('subcategory')}")
+                        print(f"Vendor: {tx_data.get('vendor', 'N/A')}")
+                        print(f"Similarity Score: {tx_data.get('similarity_score'):.4f}")
+                        
+                        # Print deduction information if available
+                        if tx_data.get("is_deductible"):
+                            print(f"Deductible: {tx_data.get('is_deductible')}")
+                            if tx_data.get("deduction_recommendation"):
+                                print(f"Deduction Recommendation: {tx_data.get('deduction_recommendation')}")
+                            if tx_data.get("deduction_category"):
+                                print(f"Deduction Category: {tx_data.get('deduction_category')}")
+        
+        print("\n" + "="*80)
+        print("VECTOR SEARCH PIPELINE COMPLETED")
+        print("="*80)
+    
+    finally:
+        # Ensure we properly close the Weaviate client
+        if client:
+            print("Closing Weaviate client connection...")
+            client.close()
+
 def main():
     parser = argparse.ArgumentParser(description="Process documents using Google Document AI and load into SQLite database")
     parser.add_argument(
@@ -245,8 +538,34 @@ def main():
         action="store_true",
         help="Skip running example queries"
     )
+    parser.add_argument(
+        "--skip-vector", "-v",
+        action="store_true",
+        help="Skip vector search pipeline"
+    )
+    parser.add_argument(
+        "--skip-enriched", "-r",
+        action="store_true",
+        help="Skip processing of enriched historical data"
+    )
+    parser.add_argument(
+        "--skip-ingestion", "-g",
+        action="store_true",
+        help="Skip vector data ingestion (use existing Weaviate data)"
+    )
+    parser.add_argument(
+        "--vector-only", "-w",
+        action="store_true",
+        help="Run only the vector search pipeline, skipping document processing and database creation"
+    )
 
     args = parser.parse_args()
+    
+    # If vector-only mode is specified, skip to vector search pipeline
+    if args.vector_only:
+        print("Running in vector-only mode - skipping document processing and database creation")
+        run_vector_search_pipeline(skip_ingestion=args.skip_ingestion)
+        return
     
     # Default to processing all types if no arguments provided
     if not args.input or not args.type:
@@ -278,6 +597,14 @@ def main():
     # After processing documents, load them into the database
     if not args.skip_db:
         process_and_load_to_database(args.output, not args.skip_examples)
+    
+    # Process enriched historical data to create tax_insights.db
+    if not args.skip_enriched:
+        process_enriched_historical_data()
+        
+    # Run vector search pipeline
+    if not args.skip_vector:
+        run_vector_search_pipeline(skip_ingestion=args.skip_ingestion)
 
 if __name__ == "__main__":
     main()
