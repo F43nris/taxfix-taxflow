@@ -397,27 +397,76 @@ def run_vector_search_pipeline(skip_ingestion=False):
             search_user['user_id'] = search_user['search_id']
             
             print("Finding similar historical users...")
-            similar_users = search_similar_users(client, user_data=search_user, limit=5)
+            similar_users = search_similar_users(client, user_data=search_user, limit=10)  # Get more results initially
             
-            print(f"Found {len(similar_users)} similar historical users:")
-            for j, user_result in enumerate(similar_users, 1):
-                print(f"\nSimilar Historical User {j}:")
+            # Filter out any exact self-matches (similarity = 1.0)
+            # Also filter out low-quality matches below 0.4 similarity
+            # Log how many users were filtered out
+            original_count = len(similar_users)
+            similar_users = [u for u in similar_users if u.similarity < 0.99 and u.similarity >= 0.4]
+            filtered_count = original_count - len(similar_users)
+            if filtered_count > 0:
+                print(f"[DEBUG] Filtered out {filtered_count} users with similarity >= 0.99 or < 0.4")
+            
+            # Process user results to keep only those with meaningful recommendations
+            users_with_recommendations = []
+            seen_recommendations = set()  # Track unique recommendations
+            
+            for user_result in similar_users:
                 user_id = user_result.data.get("user_id")
+                
+                # Add diagnostic print to see the user_id being looked up
+                print(f"[DEBUG] Looking up user with ID: {user_id}")
+                
                 user_data = get_user_by_id(user_id) if user_id else user_result.data
+                
                 if user_data:
-                    user_data["similarity_score"] = user_result.similarity
-                    # Print user using similar format as test_with_sample_data.py
-                    print(f"User ID: {user_data.get('user_id')}")
-                    print(f"Occupation: {user_data.get('occupation_category', 'N/A')}")
-                    print(f"Total Income: {user_data.get('total_income', 'N/A')}")
-                    print(f"Total Tax Deductions: {user_data.get('total_deductions', 'N/A')}")
-                    print(f"Similarity Score: {user_data.get('similarity_score'):.4f}")
+                    has_cluster = user_data.get('cluster_recommendation') not in [None, '']
+                    has_uplift = user_data.get('uplift_message') not in [None, '']
                     
-                    # Print recommendations if available
-                    if user_data.get("cluster_recommendation"):
-                        print(f"\nRecommendation: {user_data.get('cluster_recommendation')}")
-                    if user_data.get("uplift_message"):
-                        print(f"Uplift Message: {user_data.get('uplift_message')}")
+                    print(f"[DEBUG] User {user_id} has cluster_recommendation: {has_cluster}")
+                    print(f"[DEBUG] User {user_id} has uplift_message: {has_uplift}")
+                    
+                    # Extract recommendations
+                    cluster_rec = user_data.get('cluster_recommendation', '')
+                    uplift_msg = user_data.get('uplift_message', '')
+                    
+                    # Create a unique signature for this recommendation set
+                    rec_signature = f"{cluster_rec}||{uplift_msg}"
+                    
+                    # Only include users with at least one recommendation AND unique recommendation signature
+                    if (has_cluster or has_uplift) and rec_signature not in seen_recommendations:
+                        user_data["similarity_score"] = user_result.similarity
+                        users_with_recommendations.append(user_data)
+                        seen_recommendations.add(rec_signature)
+                        print(f"[DEBUG] Adding unique recommendation: {rec_signature[:50]}...")
+                    elif rec_signature in seen_recommendations:
+                        print(f"[DEBUG] Skipping duplicate recommendation for user {user_id}")
+            
+            # Update similar_users to only include those with recommendations
+            print(f"[DEBUG] Found {len(users_with_recommendations)} users with unique recommendations out of {len(similar_users)} similar users")
+            
+            # Display the filtered results
+            print(f"Found {len(users_with_recommendations)} similar historical users with recommendations:")
+            
+            for j, user_data in enumerate(users_with_recommendations, 1):
+                print(f"\nSimilar Historical User {j}:")
+                # Print user using similar format as test_with_sample_data.py
+                print(f"User ID: {user_data.get('user_id')}")
+                print(f"Occupation: {user_data.get('occupation_category', 'N/A')}")
+                print(f"Total Income: {user_data.get('total_income', 'N/A')}")
+                print(f"Total Tax Deductions: {user_data.get('total_deductions', 'N/A')}")
+                print(f"Similarity Score: {user_data.get('similarity_score'):.4f}")
+                
+                # Print recommendations if available
+                if user_data.get("cluster_recommendation"):
+                    print(f"\nRecommendation: {user_data.get('cluster_recommendation')}")
+                    if user_data.get("cluster_confidence_level"):
+                        print(f"Confidence: {user_data.get('cluster_confidence_level')}")
+                if user_data.get("uplift_message"):
+                    print(f"\nUplift Message: {user_data.get('uplift_message')}")
+                    if user_data.get("uplift_confidence_level"):
+                        print(f"Confidence: {user_data.get('uplift_confidence_level')}")
             
             # Print a separator between searches
             print("\n" + "-"*80)
@@ -426,6 +475,9 @@ def run_vector_search_pipeline(skip_ingestion=False):
             user_transactions = [tx for tx in input_transactions if tx.get('user_id') == input_user['original_user_id']]
             if user_transactions:
                 print(f"\nFinding similar historical transactions for {len(user_transactions)} transactions of user {input_user['user_id']}...")
+                
+                # Keep track of all seen transaction recommendations to avoid duplicates across searches
+                all_seen_tx_recommendations = set()
                 
                 for k, tx in enumerate(user_transactions, 1):
                     print(f"\nInput Transaction {k}:")
@@ -442,47 +494,55 @@ def run_vector_search_pipeline(skip_ingestion=False):
                     search_tx['transaction_id'] = f"INPUT-{tx['transaction_id']}"
                     
                     print("\nFinding similar historical transactions...")
-                    similar_txs = search_similar_transactions(client, transaction_data=search_tx, limit=3)
+                    similar_txs = search_similar_transactions(client, transaction_data=search_tx, limit=10)  # Get more results initially
                     
-                    print(f"Found {len(similar_txs)} similar historical transactions:")
-                    for l, tx_result in enumerate(similar_txs, 1):
-                        print(f"\nSimilar Historical Transaction {l}:")
+                    # Filter out any exact self-matches (similarity = 1.0)
+                    # Also filter out low-quality matches below 0.4 similarity
+                    # Log how many transactions were filtered out
+                    tx_original_count = len(similar_txs)
+                    similar_txs = [t for t in similar_txs if t.similarity < 0.99 and t.similarity >= 0.4]
+                    tx_filtered_count = tx_original_count - len(similar_txs)
+                    if tx_filtered_count > 0:
+                        print(f"[DEBUG] Filtered out {tx_filtered_count} transactions with similarity >= 0.99 or < 0.4")
+                    
+                    # Process transaction results to keep only those with deduction info
+                    txs_with_recommendations = []
+                    seen_tx_recommendations = set()  # Track unique recommendations
+                    
+                    for tx_result in similar_txs:
                         tx_id = tx_result.data.get("transaction_id")
                         tx_data = get_transaction_by_id(tx_id) if tx_id else tx_result.data
+                        
                         if tx_data:
-                            tx_data["similarity_score"] = tx_result.similarity
-                            # Print transaction details
-                            print(f"Transaction ID: {tx_data.get('transaction_id')}")
-                            print(f"User ID: {tx_data.get('user_id', 'N/A')}")
-                            print(f"Date: {tx_data.get('transaction_date', 'N/A')}")
-                            print(f"Amount: {tx_data.get('amount', 'N/A')}")
-                            print(f"Category: {tx_data.get('category', 'N/A')}")
-                            if tx_data.get('subcategory'):
-                                print(f"Subcategory: {tx_data.get('subcategory')}")
-                            print(f"Vendor: {tx_data.get('vendor', 'N/A')}")
-                            print(f"Similarity Score: {tx_data.get('similarity_score'):.4f}")
+                            has_deduction_info = (
+                                tx_data.get('is_deductible') is not None or
+                                tx_data.get('deduction_recommendation') not in [None, ''] or
+                                tx_data.get('deduction_category') not in [None, '']
+                            )
                             
-                            # Print deduction information if available
-                            if tx_data.get("is_deductible"):
-                                print(f"Deductible: {tx_data.get('is_deductible')}")
-                                if tx_data.get("deduction_recommendation"):
-                                    print(f"Deduction Recommendation: {tx_data.get('deduction_recommendation')}")
-                                if tx_data.get("deduction_category"):
-                                    print(f"Deduction Category: {tx_data.get('deduction_category')}")
-                
-                # Now find transactions that might be relevant based on the user profile
-                print("\n" + "-"*80)
-                print(f"\nFinding historical transactions similar to {input_user['user_id']}'s profile...")
-                
-                relevant_txs = search_transactions_for_user(client, user_data=search_user, limit=3)
-                
-                print(f"Found {len(relevant_txs)} relevant historical transactions:")
-                for m, tx_result in enumerate(relevant_txs, 1):
-                    print(f"\nRelevant Historical Transaction {m}:")
-                    tx_id = tx_result.data.get("transaction_id")
-                    tx_data = get_transaction_by_id(tx_id) if tx_id else tx_result.data
-                    if tx_data:
-                        tx_data["similarity_score"] = tx_result.similarity
+                            if has_deduction_info:
+                                # Create a unique signature for this deduction recommendation
+                                deduction_rec = str(tx_data.get('deduction_recommendation', ''))
+                                deduction_cat = str(tx_data.get('deduction_category', ''))
+                                is_deductible = str(tx_data.get('is_deductible', ''))
+                                
+                                rec_signature = f"{is_deductible}||{deduction_cat}||{deduction_rec}"
+                                
+                                # Only include transactions with unique deduction recommendations
+                                if rec_signature not in seen_tx_recommendations and rec_signature not in all_seen_tx_recommendations:
+                                    tx_data["similarity_score"] = tx_result.similarity
+                                    txs_with_recommendations.append(tx_data)
+                                    seen_tx_recommendations.add(rec_signature)
+                                    all_seen_tx_recommendations.add(rec_signature)
+                                    print(f"[DEBUG] Adding unique tx recommendation: {rec_signature[:50]}...")
+                                else:
+                                    print(f"[DEBUG] Skipping duplicate tx recommendation for tx {tx_id}")
+                    
+                    # Display the filtered results
+                    print(f"Found {len(txs_with_recommendations)} similar historical transactions with unique deduction info:")
+                    
+                    for l, tx_data in enumerate(txs_with_recommendations, 1):
+                        print(f"\nSimilar Historical Transaction {l}:")
                         # Print transaction details
                         print(f"Transaction ID: {tx_data.get('transaction_id')}")
                         print(f"User ID: {tx_data.get('user_id', 'N/A')}")
@@ -501,6 +561,79 @@ def run_vector_search_pipeline(skip_ingestion=False):
                                 print(f"Deduction Recommendation: {tx_data.get('deduction_recommendation')}")
                             if tx_data.get("deduction_category"):
                                 print(f"Deduction Category: {tx_data.get('deduction_category')}")
+                
+                # Now find transactions that might be relevant based on the user profile
+                print("\n" + "-"*80)
+                print(f"\nFinding historical transactions similar to {input_user['user_id']}'s profile...")
+                
+                relevant_txs = search_transactions_for_user(client, user_data=search_user, limit=10)  # Get more results initially
+                
+                # Filter out any exact self-matches (similarity = 1.0)
+                # Also filter out low-quality matches below 0.4 similarity
+                # Log how many transactions were filtered out
+                tx_original_count = len(relevant_txs)
+                relevant_txs = [t for t in relevant_txs if t.similarity < 0.99 and t.similarity >= 0.4]
+                tx_filtered_count = tx_original_count - len(relevant_txs)
+                if tx_filtered_count > 0:
+                    print(f"[DEBUG] Filtered out {tx_filtered_count} transactions with similarity >= 0.99 or < 0.4")
+                
+                # Process transaction results to keep only those with deduction info
+                profile_txs_with_recommendations = []
+                seen_profile_tx_recommendations = set()  # Track unique recommendations
+                
+                for tx_result in relevant_txs:
+                    tx_id = tx_result.data.get("transaction_id")
+                    tx_data = get_transaction_by_id(tx_id) if tx_id else tx_result.data
+                    
+                    if tx_data:
+                        has_deduction_info = (
+                            tx_data.get('is_deductible') is not None or
+                            tx_data.get('deduction_recommendation') not in [None, ''] or
+                            tx_data.get('deduction_category') not in [None, '']
+                        )
+                        
+                        if has_deduction_info:
+                            # Create a unique signature for this deduction recommendation
+                            deduction_rec = str(tx_data.get('deduction_recommendation', ''))
+                            deduction_cat = str(tx_data.get('deduction_category', ''))
+                            is_deductible = str(tx_data.get('is_deductible', ''))
+                            
+                            rec_signature = f"{is_deductible}||{deduction_cat}||{deduction_rec}"
+                            
+                            # Check if we've already seen this recommendation
+                            # Also check against all previously seen transaction recommendations
+                            if rec_signature not in seen_profile_tx_recommendations and rec_signature not in all_seen_tx_recommendations:
+                                tx_data["similarity_score"] = tx_result.similarity
+                                profile_txs_with_recommendations.append(tx_data)
+                                seen_profile_tx_recommendations.add(rec_signature)
+                                all_seen_tx_recommendations.add(rec_signature)
+                                print(f"[DEBUG] Adding unique profile-based tx recommendation: {rec_signature[:50]}...")
+                            else:
+                                print(f"[DEBUG] Skipping duplicate profile-based tx recommendation for tx {tx_id}")
+                
+                # Display the filtered results
+                print(f"Found {len(profile_txs_with_recommendations)} relevant historical transactions with unique deduction info:")
+                
+                for m, tx_data in enumerate(profile_txs_with_recommendations, 1):
+                    print(f"\nRelevant Historical Transaction {m}:")
+                    # Print transaction details
+                    print(f"Transaction ID: {tx_data.get('transaction_id')}")
+                    print(f"User ID: {tx_data.get('user_id', 'N/A')}")
+                    print(f"Date: {tx_data.get('transaction_date', 'N/A')}")
+                    print(f"Amount: {tx_data.get('amount', 'N/A')}")
+                    print(f"Category: {tx_data.get('category', 'N/A')}")
+                    if tx_data.get('subcategory'):
+                        print(f"Subcategory: {tx_data.get('subcategory')}")
+                    print(f"Vendor: {tx_data.get('vendor', 'N/A')}")
+                    print(f"Similarity Score: {tx_data.get('similarity_score'):.4f}")
+                    
+                    # Print deduction information if available
+                    if tx_data.get("is_deductible"):
+                        print(f"Deductible: {tx_data.get('is_deductible')}")
+                        if tx_data.get("deduction_recommendation"):
+                            print(f"Deduction Recommendation: {tx_data.get('deduction_recommendation')}")
+                        if tx_data.get("deduction_category"):
+                            print(f"Deduction Category: {tx_data.get('deduction_category')}")
         
         print("\n" + "="*80)
         print("VECTOR SEARCH PIPELINE COMPLETED")

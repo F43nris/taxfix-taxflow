@@ -78,6 +78,12 @@ def fetch_users(limit: int = 100, user_id: Optional[str] = None) -> List[Dict[st
             
             for enriched_user in enriched_users:
                 user_id = enriched_user["user_id"]
+                # Add explicit debug logging for important fields
+                if "cluster_recommendation" in enriched_user:
+                    logger.info(f"User {user_id} has cluster_recommendation: {enriched_user.get('cluster_recommendation')}")
+                if "uplift_message" in enriched_user:
+                    logger.info(f"User {user_id} has uplift_message: {enriched_user.get('uplift_message')}")
+                
                 if user_id in user_map:
                     # Update existing user with enriched data
                     for key, value in enriched_user.items():
@@ -168,8 +174,20 @@ def fetch_transactions(limit: int = 100, user_id: Optional[str] = None, transact
 
 def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
     """Get a user by ID from both sources."""
+    logger.info(f"Retrieving user with ID: {user_id}")
     users = fetch_users(user_id=user_id)
-    return users[0] if users else None
+    if users:
+        user = users[0]
+        # Debug log important fields
+        logger.info(f"Retrieved user {user_id} with keys: {list(user.keys())}")
+        if 'cluster_recommendation' in user:
+            logger.info(f"User {user_id} has cluster_recommendation: {user.get('cluster_recommendation')}")
+        if 'uplift_message' in user:
+            logger.info(f"User {user_id} has uplift_message: {user.get('uplift_message')}")
+        return user
+    else:
+        logger.warning(f"No user found with ID: {user_id}")
+        return None
 
 def get_transaction_by_id(transaction_id: str) -> Optional[Dict[str, Any]]:
     """Get a transaction by ID from both sources."""
