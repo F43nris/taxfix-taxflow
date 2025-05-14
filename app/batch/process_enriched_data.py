@@ -103,6 +103,11 @@ class EnrichedTransaction(BaseModel):
     deduction_recommendation: Optional[str] = None
     deduction_category: Optional[str] = None
     
+    # Essential fields from uplift insights
+    uplift_message: Optional[str] = None
+    uplift_confidence_level: Optional[str] = None
+    uplift_pct: Optional[float] = None
+    
     class Config:
         from_attributes = True
 
@@ -201,6 +206,11 @@ class EnrichedDataDB(DatabaseManager):
             deduction_recommendation TEXT,
             deduction_category TEXT,
             
+            -- Essential fields from uplift insights
+            uplift_message TEXT,
+            uplift_confidence_level TEXT,
+            uplift_pct REAL,
+            
             FOREIGN KEY (user_id) REFERENCES enriched_users (user_id)
         )
         ''')
@@ -245,8 +255,9 @@ class EnrichedDataDB(DatabaseManager):
                 transaction_id, user_id, transaction_date, amount, category,
                 subcategory, description, vendor, transaction_month, 
                 quarter, year, occupation_category, family_status, is_deductible, 
-                deduction_confidence_score, deduction_recommendation, deduction_category
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                deduction_confidence_score, deduction_recommendation, deduction_category,
+                uplift_message, uplift_confidence_level, uplift_pct
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 transaction_data.get('transaction_id'),
                 transaction_data.get('user_id'),
@@ -264,7 +275,10 @@ class EnrichedDataDB(DatabaseManager):
                 transaction_data.get('is_deductible'),
                 transaction_data.get('deduction_confidence_score'),
                 transaction_data.get('deduction_recommendation'),
-                transaction_data.get('deduction_category')
+                transaction_data.get('deduction_category'),
+                transaction_data.get('uplift_message'),
+                transaction_data.get('uplift_confidence_level'),
+                transaction_data.get('uplift_pct')
             ))
             return True
         except Exception as e:
@@ -487,6 +501,68 @@ def preprocess_data():
         logger.warning("⚠️ Missing required columns for deduction enrichment")
         enriched_transactions = transaction_df
     
+    # Enrich transactions with uplift insights
+    logger.info("Enriching transactions with uplift insights...")
+
+    # Check if insights_df has the necessary columns
+    if 'category' in insights_df.columns and 'message' in insights_df.columns and 'confidence_level' in insights_df.columns:
+        # Rename columns in insights_df to avoid conflicts
+        insights_df = insights_df.rename(columns={
+            'confidence_level': 'uplift_confidence_level',
+            'message': 'uplift_message'
+        })
+        
+        # Create a mapping from category to uplift insights
+        category_to_uplift = {}
+        for _, row in insights_df.iterrows():
+            category = row.get('category')
+            if category:
+                category_to_uplift[category] = {
+                    'uplift_message': row.get('uplift_message', ''),
+                    'uplift_confidence_level': row.get('uplift_confidence_level', ''),
+                    'uplift_pct': row.get('uplift_pct', 0.0)
+                }
+        
+        # Add uplift insights to transactions based on category
+        if 'category' in enriched_transactions.columns:
+            # Initialize uplift columns with None
+            enriched_transactions['uplift_message'] = None
+            enriched_transactions['uplift_confidence_level'] = None
+            enriched_transactions['uplift_pct'] = None
+            
+            # Count before enrichment
+            pre_uplift_count = len(enriched_transactions)
+            
+            # Apply uplift insights based on category
+            for category, uplift_data in category_to_uplift.items():
+                mask = enriched_transactions['category'] == category
+                enriched_transactions.loc[mask, 'uplift_message'] = uplift_data['uplift_message']
+                enriched_transactions.loc[mask, 'uplift_confidence_level'] = uplift_data['uplift_confidence_level']
+                enriched_transactions.loc[mask, 'uplift_pct'] = uplift_data['uplift_pct']
+            
+            # Count enriched transactions
+            uplift_match_count = (~pd.isna(enriched_transactions['uplift_message'])).sum()
+            uplift_no_match_count = pd.isna(enriched_transactions['uplift_message']).sum()
+            
+            if uplift_match_count == 0:
+                logger.warning("⚠️ No transactions were enriched with uplift insights. Check category matching.")
+            else:
+                logger.info(f"Enriched {uplift_match_count} transactions with uplift insights")
+                logger.info(f"Could not enrich {uplift_no_match_count} transactions with uplift insights")
+                
+            # Debug: Check for null values in uplift fields
+            null_uplift_message = pd.isna(enriched_transactions['uplift_message']).sum()
+            null_uplift_confidence = pd.isna(enriched_transactions['uplift_confidence_level']).sum()
+            null_uplift_pct = pd.isna(enriched_transactions['uplift_pct']).sum()
+            
+            logger.info(f"Null uplift_message count: {null_uplift_message} ({null_uplift_message/len(enriched_transactions)*100:.2f}%)")
+            logger.info(f"Null uplift_confidence_level count: {null_uplift_confidence} ({null_uplift_confidence/len(enriched_transactions)*100:.2f}%)")
+            logger.info(f"Null uplift_pct count: {null_uplift_pct} ({null_uplift_pct/len(enriched_transactions)*100:.2f}%)")
+        else:
+            logger.warning("⚠️ Missing 'category' column in transactions for uplift enrichment")
+    else:
+        logger.warning("⚠️ Missing required columns for uplift insight enrichment")
+    
     # Enrich users with hierarchical recommendations (essential fields only)
     logger.info("Enriching users with hierarchical recommendations...")
     
@@ -498,16 +574,30 @@ def preprocess_data():
             'recommendation': 'cluster_recommendation'
         })
         
-        # Group by user_id and get top recommendation for each user
+        # Group by user_id and combine recommendations where user already has claims (user_pct > 0)
         user_recommendations = {}
         for user_id, group in recommendations_df.groupby('user_id'):
-            # Take the first recommendation for each user
             if not group.empty:
-                row = group.iloc[0]
-                user_recommendations[user_id] = {
-                    'cluster_recommendation': row.get('cluster_recommendation', ''),
-                    'cluster_confidence_level': row.get('cluster_confidence_level', '')
-                }
+                # Filter for recommendations where user already has claims (user_pct > 0)
+                existing_claims = group[group['user_pct'] > 0.0]
+                
+                if not existing_claims.empty:
+                    # Combine all recommendations for existing claims into one string
+                    combined_recommendation = " | ".join(existing_claims['cluster_recommendation'].tolist())
+                    # Use the highest confidence level among these recommendations
+                    highest_confidence = existing_claims['cluster_confidence_level'].max()
+                    
+                    user_recommendations[user_id] = {
+                        'cluster_recommendation': combined_recommendation,
+                        'cluster_confidence_level': highest_confidence
+                    }
+                else:
+                    # If no existing claims with recommendations, use the first recommendation
+                    row = group.iloc[0]
+                    user_recommendations[user_id] = {
+                        'cluster_recommendation': row.get('cluster_recommendation', ''),
+                        'cluster_confidence_level': row.get('cluster_confidence_level', '')
+                    }
         
         # Convert to DataFrame
         user_recommendations_df = pd.DataFrame([
@@ -528,47 +618,6 @@ def preprocess_data():
     else:
         logger.warning("⚠️ Missing required columns for hierarchical recommendation enrichment")
         enriched_users = user_df
-    
-    # Enrich users with uplift insights (essential fields only)
-    logger.info("Enriching users with uplift insights...")
-    
-    # Group insights by user_id - get only the required fields
-    if 'user_id' in insights_df.columns and 'message' in insights_df.columns and 'confidence_level' in insights_df.columns:
-        # Rename columns in insights_df to avoid conflicts
-        insights_df = insights_df.rename(columns={
-            'confidence_level': 'uplift_confidence_level',
-            'message': 'uplift_message'
-        })
-        
-        # Group by user_id and get top insight for each user
-        user_insights = {}
-        for user_id, group in insights_df.groupby('user_id'):
-            # Take the first insight for each user
-            if not group.empty:
-                row = group.iloc[0]
-                user_insights[user_id] = {
-                    'uplift_message': row.get('uplift_message', ''),
-                    'uplift_confidence_level': row.get('uplift_confidence_level', '')
-                }
-        
-        # Convert to DataFrame
-        user_insights_df = pd.DataFrame([
-            {'user_id': user_id, **data} 
-            for user_id, data in user_insights.items()
-        ])
-        
-        # Merge with user data
-        enriched_users = pd.merge(
-            enriched_users,
-            user_insights_df,
-            on='user_id',
-            how='left'
-        )
-        
-        match_count = (~pd.isna(enriched_users['uplift_message'])).sum()
-        logger.info(f"Enriched {match_count} users with uplift insight data")
-    else:
-        logger.warning("⚠️ Missing required columns for uplift insight enrichment")
     
     return enriched_users, enriched_transactions
 
