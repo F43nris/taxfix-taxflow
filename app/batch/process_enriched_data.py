@@ -295,7 +295,7 @@ class EnrichedDataDB(DatabaseManager):
 def preprocess_data():
     """Preprocess and merge all the data sources"""
     # Load the full joined data
-    full_joined_path = ROOT_DIR.parent / "notebooks" / "data" / "full_joined_data.csv"
+    full_joined_path = ROOT_DIR.parent / "notebooks" / "processed_data" / "full_joined_data.csv"
     logger.info(f"Loading full joined data from {full_joined_path}")
     
     if not full_joined_path.exists():

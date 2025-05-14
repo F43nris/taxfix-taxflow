@@ -29,7 +29,7 @@ def get_db_connection(db_path: str):
         logger.error(f"Error connecting to database {db_path}: {str(e)}")
         return None
 
-def fetch_users(limit: int = 100, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def fetch_users(limit: int = 10000, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Fetch users from both regular and enriched tables and combine them.
     
@@ -101,7 +101,36 @@ def fetch_users(limit: int = 100, user_id: Optional[str] = None) -> List[Dict[st
     logger.info(f"Combined {len(users)} users from all sources")
     return users
 
-def fetch_transactions(limit: int = 100, user_id: Optional[str] = None, transaction_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def fetch_historical_users_only(limit: int = 10000, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Fetch users ONLY from the enriched (historical) table.
+    
+    Args:
+        limit: Maximum number of users to fetch
+        user_id: Optional user ID to fetch a specific user
+        
+    Returns:
+        List of historical user dictionaries
+    """
+    users = []
+    conn = get_db_connection(ENRICHED_DB_PATH)
+    if conn:
+        try:
+            cursor = conn.cursor()
+            if user_id:
+                cursor.execute("SELECT * FROM enriched_users WHERE user_id = ?", (user_id,))
+            else:
+                cursor.execute(f"SELECT * FROM enriched_users LIMIT {limit}")
+            
+            users = [dict(row) for row in cursor.fetchall()]
+            logger.info(f"Fetched {len(users)} users exclusively from enriched (historical) database")
+        except Exception as e:
+            logger.error(f"Error fetching from enriched_users (historical only) table: {str(e)}")
+        finally:
+            conn.close()
+    return users
+
+def fetch_transactions(limit: int = 10000, user_id: Optional[str] = None, transaction_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Fetch transactions from both regular and enriched tables and combine them.
     
@@ -172,6 +201,38 @@ def fetch_transactions(limit: int = 100, user_id: Optional[str] = None, transact
     logger.info(f"Combined {len(transactions)} transactions from all sources")
     return transactions
 
+def fetch_historical_transactions_only(limit: int = 10000, user_id: Optional[str] = None, transaction_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Fetch transactions ONLY from the enriched (historical) table.
+    
+    Args:
+        limit: Maximum number of transactions to fetch
+        user_id: Optional user ID to filter transactions
+        transaction_id: Optional transaction ID to fetch a specific transaction
+        
+    Returns:
+        List of historical transaction dictionaries
+    """
+    transactions = []
+    conn = get_db_connection(ENRICHED_DB_PATH)
+    if conn:
+        try:
+            cursor = conn.cursor()
+            if transaction_id:
+                cursor.execute("SELECT * FROM enriched_transactions WHERE transaction_id = ?", (transaction_id,))
+            elif user_id:
+                cursor.execute("SELECT * FROM enriched_transactions WHERE user_id = ? LIMIT ?", (user_id, limit))
+            else:
+                cursor.execute(f"SELECT * FROM enriched_transactions LIMIT {limit}")
+            
+            transactions = [dict(row) for row in cursor.fetchall()]
+            logger.info(f"Fetched {len(transactions)} transactions exclusively from enriched (historical) database")
+        except Exception as e:
+            logger.error(f"Error fetching from enriched_transactions (historical only) table: {str(e)}")
+        finally:
+            conn.close()
+    return transactions
+
 def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
     """Get a user by ID from both sources."""
     logger.info(f"Retrieving user with ID: {user_id}")
@@ -194,7 +255,7 @@ def get_transaction_by_id(transaction_id: str) -> Optional[Dict[str, Any]]:
     transactions = fetch_transactions(transaction_id=transaction_id)
     return transactions[0] if transactions else None
 
-def get_user_transactions(user_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+def get_user_transactions(user_id: str, limit: int = 10000) -> List[Dict[str, Any]]:
     """Get all transactions for a user."""
     return fetch_transactions(user_id=user_id, limit=limit)
 

@@ -363,8 +363,16 @@ def tax_peer_group_hierarchical(data_path, results_dir='.', income_quantiles=5, 
             
             # Get peer context
             if 'occupation_category' in df.columns:
-                peer_occupation = df[df['user_id'].isin(cluster_user_ids)]['occupation_category'].mode()[0]
-                peer_context = f"Other {peer_occupation}"
+                # Get the user's own occupation
+                user_occupation = df[df['user_id'] == user_id]['occupation_category'].iloc[0] if not df[df['user_id'] == user_id].empty else None
+                
+                if user_occupation:
+                    # Use the user's own occupation for personalized context
+                    peer_context = f"Other {user_occupation}s"
+                else:
+                    # Fallback to cluster mode if user occupation not found
+                    peer_occupation = df[df['user_id'].isin(cluster_user_ids)]['occupation_category'].mode()[0]
+                    peer_context = f"Other {peer_occupation}"
             else:
                 peer_context = "Similar taxpayers"
             
