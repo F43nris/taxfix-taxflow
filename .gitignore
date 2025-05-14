@@ -182,3 +182,5 @@ app/data/*
 
 notebooks/processed_data/*
 notebooks/unprocessed_data/*
+
+.cursorignore
