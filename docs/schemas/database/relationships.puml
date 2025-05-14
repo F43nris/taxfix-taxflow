@@ -1,0 +1,50 @@
+@startuml Database Schema Relationships
+
+' User entity
+entity "User" as user {
+  * user_id : string <<PK>>
+  occupation_category : string
+  annualized_income : float
+  annualized_tax_deductions : float
+}
+
+' Transaction entity
+entity "Transaction" as transaction {
+  * transaction_id : string <<PK>>
+  * user_id : string <<FK>>
+  * receipt_id : string <<FK>>
+  transaction_date : datetime
+  amount : float
+  category : string
+}
+
+' Receipt entity
+entity "Receipt" as receipt {
+  * id : string <<PK>>
+  file_path : string
+  invoice_date : datetime
+  total_amount : float
+  supplier_name : string
+  line_items : json  ' JSON array, not a separate table
+}
+
+' IncomeStatement entity
+entity "IncomeStatement" as income {
+  * id : string <<PK>>
+  pay_date : datetime
+  gross_earnings : float
+  net_pay : float
+  occupation_category : string
+  tax_items : json  ' JSON array, not a separate table
+}
+
+' Relationships
+user ||--o{ transaction : has
+receipt ||--o{ transaction : generates
+income ..> user : updates
+
+note "IncomeStatements are used to create or update User profiles" as N1
+note "Receipts generate Transactions that belong to Users" as N2
+note "Both LineItems and TaxItems are stored as JSON arrays within their parent tables" as N3
+
+@enduml 

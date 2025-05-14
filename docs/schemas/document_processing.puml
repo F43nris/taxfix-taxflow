@@ -1,0 +1,78 @@
+@startuml Tax Processing System - Document Processing
+
+' Define styling
+skinparam backgroundColor white
+skinparam componentStyle rectangle
+skinparam monochrome false
+skinparam shadowing false
+skinparam defaultFontSize 14
+
+' Input documents
+rectangle "Document Sources" as sources {
+  [Receipt Images/PDFs] as receipts
+  [Income Statement PDFs] as incomeStmts
+}
+
+' External services
+cloud "Google Cloud" {
+  [Document AI] as documentAI
+}
+
+' Document processing
+rectangle "Document Processing Pipeline" {
+  [DocumentAIProcessor] as processor
+  [process_documents()] as processDocuments
+  [save_as_json()] as saveJson
+}
+
+' JSON outputs
+folder "Processed JSONs" as processedJsons {
+  [Receipt JSONs] as receiptJson
+  [Income Statement JSONs] as incomeJson
+}
+
+' Database loading
+rectangle "Database Loading" {
+  [load_transactions()] as loadTransactions
+  [Receipt.to_transaction()] as toTransaction
+  [IncomeStatement.to_user()] as toUser
+}
+
+database "transactions.db" {
+  [Users Table] as usersTable
+  [Transactions Table] as transactionsTable
+}
+
+' Flow
+receipts --> processor : input
+incomeStmts --> processor : input
+processor --> documentAI : sends docs to
+documentAI --> processor : structured extraction
+processor --> processDocuments : processes
+processDocuments --> saveJson : extracts data
+saveJson --> processedJsons : writes
+
+processedJsons --> loadTransactions : reads
+loadTransactions --> toTransaction : converts receipts
+loadTransactions --> toUser : converts income statements
+toTransaction --> transactionsTable : populates
+toUser --> usersTable : creates/updates
+
+note right of processor
+  Handles communication with Google Document AI
+  Processes both receipts and income statements
+  Extracts key fields with confidence scores
+end note
+
+note bottom of processedJsons
+  Intermediate JSON files contain structured data
+  with confidence scores for each extracted field
+end note
+
+note right of loadTransactions
+  Reads all JSON files from processed directory
+  Converts JSONs to database objects
+  Handles creation and updating of database records
+end note
+
+@enduml 

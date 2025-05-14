@@ -1,0 +1,113 @@
+@startuml Tax Processing Data Flow
+
+' Define components
+rectangle "Raw Documents" as rawDocs {
+  [Receipt Images/PDFs] as receipts
+  [Income Statement PDFs] as incomeStmts
+  [Historical CSV Data] as historicalCSV
+}
+
+rectangle "Document Processing" as docProc {
+  [Document AI Processor] as docAI
+  database "Processed JSONs" as processedJson {
+    [Receipt JSONs] as receiptJson
+    [Income Statement JSONs] as incomeJson
+  }
+}
+
+rectangle "Database Layer" as dbLayer {
+  database "transactions.db" as transactionsDB {
+    [Users] as userTable
+    [Transactions] as transactionTable
+  }
+  database "tax_insights.db" as insightsDB {
+    [Enriched Users] as enrichedUser
+    [Enriched Transactions] as enrichedTx
+  }
+}
+
+rectangle "Vector Search" as vectorSearch {
+  database "Weaviate Vector DB" as weaviateDB {
+    [User Vectors] as userVectors
+    [Transaction Vectors] as txVectors
+  }
+}
+
+rectangle "Search & Analysis" as search {
+  [Vector Similarity Search] as vectorSim
+  [Semantic Search] as semanticSearch
+}
+
+rectangle "Results & Recommendations" as results {
+  [Tax Insights] as insights
+  [Deduction Recommendations] as deductions
+  [Personalized Recommendations] as personalRec
+  [Pipeline Results File] as resultsFile
+}
+
+' Define relationships and data flow
+receipts --> docAI : processed by
+incomeStmts --> docAI : processed by
+docAI --> receiptJson : generates
+docAI --> incomeJson : generates
+historicalCSV --> insightsDB : process_enriched_data
+
+receiptJson --> transactionTable : load_transactions
+incomeJson --> userTable : load_transactions
+
+transactionsDB --> weaviateDB : loaded as input data
+insightsDB --> weaviateDB : loaded as historical data
+
+weaviateDB --> vectorSim : queried by
+transactionsDB --> semanticSearch : queried by
+insightsDB --> semanticSearch : queried by
+
+vectorSim --> insights : generates
+vectorSim --> deductions : finds
+semanticSearch --> personalRec : provides
+
+insights --> resultsFile : format_pipeline_results
+deductions --> resultsFile : format_pipeline_results
+personalRec --> resultsFile : format_pipeline_results
+
+' Add notes
+note right of docAI
+  DocumentAIProcessor processes receipts 
+  and income statements using Google 
+  Document AI and outputs structured JSONs
+end note
+
+note right of historicalCSV
+  Historical data is processed directly
+  into tax_insights.db without going
+  through Document AI
+end note
+
+note right of userTable
+  Income statements update User records
+  with occupation, income and tax details
+end note
+
+note right of transactionTable
+  Receipts generate Transaction records
+  for tax deduction analysis
+end note
+
+note right of insightsDB
+  Historical enriched data provides
+  context for recommendations
+end note
+
+note right of weaviateDB
+  Vector database enables similarity
+  search between current and historical data
+end note
+
+note bottom of resultsFile
+  Final pipeline results are saved as a
+  formatted text file with tax insights,
+  deduction opportunities, and
+  personalized recommendations
+end note
+
+@enduml 
