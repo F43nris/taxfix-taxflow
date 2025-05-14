@@ -31,6 +31,48 @@ from app.vector.search_api import TaxInsightSearchAPI
 from app.semantic import search as semantic_search
 from app.semantic.examples import run_example_semantic_queries
 
+# Function to capture output from a function
+def capture_output(func, *args, **kwargs):
+    """
+    Capture stdout output from a function call.
+    
+    Args:
+        func: Function to call
+        *args, **kwargs: Arguments to pass to the function
+        
+    Returns:
+        tuple: (function_result, captured_output_string)
+    """
+    # Create a StringIO object to capture output
+    output_buffer = io.StringIO()
+    
+    # Create a custom stream that writes to both stdout and our buffer
+    class TeeStream:
+        def __init__(self, original_stream, buffer):
+            self.original_stream = original_stream
+            self.buffer = buffer
+        
+        def write(self, message):
+            self.original_stream.write(message)
+            self.buffer.write(message)
+        
+        def flush(self):
+            self.original_stream.flush()
+            self.buffer.flush()
+    
+    # Redirect stdout to our tee stream
+    original_stdout = sys.stdout
+    sys.stdout = TeeStream(original_stdout, output_buffer)
+    
+    try:
+        # Call the function
+        result = func(*args, **kwargs)
+        return result, output_buffer.getvalue()
+    finally:
+        # Restore stdout
+        sys.stdout = original_stdout
+        output_buffer.close()
+
 def get_file_patterns(doc_type):
     """Get file patterns based on document type."""
     if doc_type.lower() == "receipt":
@@ -325,7 +367,19 @@ def format_pipeline_results(results: str) -> str:
     """
     print("\n[DEBUG] Starting format_pipeline_results")
     
-    lines = results.split('\n')
+    # Check if we have a semantic results section
+    has_semantic_section = "SEMANTIC SEARCH QUERY RESULTS" in results
+    
+    # If we have a semantic section, split the results to handle both parts separately
+    if has_semantic_section:
+        parts = results.split("="*80 + "\nSEMANTIC SEARCH QUERY RESULTS\n" + "="*80, 1)
+        vector_results = parts[0]
+        semantic_results = parts[1] if len(parts) > 1 else ""
+    else:
+        vector_results = results
+        semantic_results = ""
+    
+    lines = vector_results.split('\n')
     
     # Build a structured representation of the data
     structured_data = {
@@ -719,9 +773,17 @@ def format_pipeline_results(results: str) -> str:
             
             formatted_output.append("")
     
-    final_output_str = "\n".join(formatted_output)
+    formatted_output_str = "\n".join(formatted_output)
+    
+    # If we have semantic results, add them after the formatted output
+    if semantic_results:
+        formatted_output_str += "\n\n" + "="*80 + "\n"
+        formatted_output_str += "SEMANTIC SEARCH QUERY RESULTS\n"
+        formatted_output_str += "="*80 + "\n\n"
+        formatted_output_str += semantic_results.strip()
+    
     print("\n[DEBUG] Finished formatting pipeline results")
-    return final_output_str
+    return formatted_output_str
 
 def run_vector_search_pipeline(skip_ingestion=False, run_semantic_queries=True):
     """
@@ -1074,16 +1136,29 @@ def run_vector_search_pipeline(skip_ingestion=False, run_semantic_queries=True):
                 print("Closing Weaviate client connection...")
                 client.close()
         
-        results = output_buffer.getvalue()
+        # Get the vector search results
+        vector_results = output_buffer.getvalue()
         
-        save_pipeline_results("app/data/processed", results)
-        
-        # Run semantic queries if requested
+        # Run semantic queries if requested and capture their output
+        semantic_results = ""
         if run_semantic_queries:
             print("\n" + "="*80)
             print("RUNNING SEMANTIC SEARCH QUERIES")
             print("="*80)
-            run_example_semantic_queries()
+            
+            # Capture the output from semantic queries
+            _, semantic_results = capture_output(run_example_semantic_queries)
+        
+        # Combine vector and semantic results
+        combined_results = vector_results
+        if semantic_results:
+            combined_results += "\n\n" + "="*80 + "\n"
+            combined_results += "SEMANTIC SEARCH QUERY RESULTS\n"
+            combined_results += "="*80 + "\n"
+            combined_results += semantic_results
+        
+        # Save the combined results
+        save_pipeline_results("app/data/processed", combined_results)
         
     finally:
         sys.stdout = original_stdout
@@ -1146,7 +1221,17 @@ def main():
     # If semantic-only mode is specified, skip to semantic search queries
     if args.semantic_only:
         print("Running in semantic-only mode - skipping document processing and database creation")
-        run_example_semantic_queries()
+        # Capture and save the output from semantic queries
+        _, semantic_results = capture_output(run_example_semantic_queries)
+        
+        # Create a formatted results file with just the semantic query results
+        results = "="*80 + "\n"
+        results += "SEMANTIC SEARCH QUERY RESULTS\n"
+        results += "="*80 + "\n"
+        results += semantic_results
+        
+        # Save the results
+        save_pipeline_results("app/data/processed", results)
         return
     
     # If vector-only mode is specified, skip to vector search pipeline
@@ -1197,7 +1282,21 @@ def main():
         run_vector_search_pipeline(skip_ingestion=args.skip_ingestion, run_semantic_queries=not args.skip_examples)
     # If vector search is skipped but we still want to run semantic queries
     elif not args.skip_examples:
-        run_example_semantic_queries()
+        # Capture and save the output from semantic queries
+        print("\n" + "="*80)
+        print("RUNNING SEMANTIC SEARCH QUERIES")
+        print("="*80)
+        
+        _, semantic_results = capture_output(run_example_semantic_queries)
+        
+        # Create a formatted results file with just the semantic query results
+        results = "="*80 + "\n"
+        results += "SEMANTIC SEARCH QUERY RESULTS\n"
+        results += "="*80 + "\n"
+        results += semantic_results
+        
+        # Save the results
+        save_pipeline_results("app/data/processed", results)
 
 if __name__ == "__main__":
     main()
