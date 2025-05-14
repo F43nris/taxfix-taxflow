@@ -1,0 +1,93 @@
+@startuml Tax Processing System - Analysis & Recommendations
+
+' Define styling
+skinparam backgroundColor white
+skinparam componentStyle rectangle
+skinparam monochrome false
+skinparam shadowing false
+skinparam defaultFontSize 14
+
+' Data sources
+database "transactions.db" as transactionsDB {
+  [Users] as users
+  [Transactions] as transactions
+}
+
+database "tax_insights.db" as insightsDB {
+  [Enriched Users] as enrichedUsers
+  [Enriched Transactions] as enrichedTransactions
+}
+
+rectangle "Local Docker" as docker {
+  database "Weaviate" as weaviate {
+    [User Vectors] as userVectors
+    [Transaction Vectors] as txVectors
+  }
+}
+
+' Analysis components
+rectangle "Vector Similarity Search" as vectorSearch {
+  [search_similar_users()] as similarUsers
+  [search_similar_transactions()] as similarTx
+  [search_transactions_for_user()] as txForUser
+}
+
+rectangle "Limited Semantic Search" as semanticSearch {
+  [run_example_semantic_queries()] as exampleQueries
+  note bottom of exampleQueries
+    Only handles 10 pre-defined example queries
+  end note
+}
+
+' Results processing
+rectangle "Results Processing" as resultsProc {
+  [format_pipeline_results()] as formatResults
+  [save_pipeline_results()] as saveResults
+}
+
+' Output
+file "Tax Insights Report" as report {
+  [User Profile] as userProfile
+  [Personalized Recommendations] as personalRecs
+  [Transaction Analysis] as txAnalysis
+  [Deduction Opportunities] as deductionOpps
+}
+
+' Main flow
+transactionsDB --> vectorSearch : input users & transactions
+insightsDB --> vectorSearch : historical data
+insightsDB --> semanticSearch : query source
+weaviate <--> vectorSearch : similarity searches
+vectorSearch --> resultsProc : vector search results
+semanticSearch --> resultsProc : semantic query results
+resultsProc --> report : generates formatted report
+
+' Internal vector search flow
+users --> similarUsers : find similar historical users
+transactions --> similarTx : find similar historical transactions
+users --> txForUser : find relevant transactions for user profile
+
+' Pipeline components
+note top of vectorSearch
+  Vector similarity search finds:
+  1. Similar users based on profile attributes
+  2. Similar transactions based on details
+  3. Relevant transactions for a user profile
+end note
+
+note top of formatResults
+  Processes raw search results into structured insights:
+  - Deduction recommendations
+  - Tax category assignments
+  - Personalized user recommendations
+end note
+
+note bottom of report
+  Final output is a text report with:
+  - User profile summary
+  - Personalized tax recommendations
+  - Transaction analysis with deduction opportunities
+  - Additional relevant insights
+end note
+
+@enduml 

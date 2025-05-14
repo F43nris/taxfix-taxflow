@@ -1,0 +1,77 @@
+@startuml Tax Processing System - Data Enrichment
+
+' Define styling
+skinparam backgroundColor white
+skinparam componentStyle rectangle
+skinparam monochrome false
+skinparam shadowing false
+skinparam defaultFontSize 14
+
+' Data sources
+file "Historical Data" as historicalData {
+  [full_joined_data.csv]
+}
+
+' Processing components
+rectangle "Historical Data Processing" as dataProcessing {
+  [process_enriched_historical_data()] as processFunction
+  [process_enriched_data()] as batchFunction
+}
+
+' Database
+database "tax_insights.db" as insightsDb {
+  [enriched_users] as enrichedUsersTable
+  [enriched_transactions] as enrichedTxTable
+}
+
+' Docker components
+rectangle "Local Docker Environment" as docker {
+  database "Weaviate Vector DB" as weaviate
+}
+
+' Vector search components
+rectangle "Vector Data Management" as vectorMgmt {
+  [create_schema()] as createSchema
+  [add_or_update_user()] as addUser
+  [add_or_update_transaction()] as addTransaction
+  [fetch_historical_users_only()] as fetchUsers
+  [fetch_historical_transactions_only()] as fetchTransactions
+}
+
+' Flow
+historicalData --> processFunction : source data
+processFunction --> batchFunction : calls main function
+batchFunction --> insightsDb : creates/populates
+insightsDb --> fetchUsers : retrieves users
+insightsDb --> fetchTransactions : retrieves transactions
+fetchUsers --> addUser : loads user vectors
+fetchTransactions --> addTransaction : loads transaction vectors
+addUser --> weaviate : stores vectors
+addTransaction --> weaviate : stores vectors
+createSchema --> weaviate : defines structure
+
+' Processing notes
+note left of historicalData
+  Historical CSV contains pre-enriched data
+  with user profiles and transaction details
+  used for training and recommendation context
+end note
+
+note bottom of batchFunction
+  Processes CSV data and builds the tax_insights.db
+  with enriched user and transaction information
+end note
+
+note right of insightsDb
+  Contains pre-enriched data about users 
+  and transactions that provides context
+  for recommendations and insights
+end note
+
+note right of weaviate
+  Vector database running in local Docker
+  enables semantic similarity searches
+  across users and transactions
+end note
+
+@enduml 

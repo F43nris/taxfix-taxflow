@@ -1,0 +1,72 @@
+@startuml Tax Processing System - Overview
+
+' Define styling
+skinparam backgroundColor white
+skinparam componentStyle rectangle
+skinparam monochrome false
+skinparam shadowing false
+skinparam packageStyle folder
+skinparam defaultFontSize 14
+skinparam DefaultTextAlignment center
+
+' Main actor
+actor "User/Taxpayer" as user
+
+' High-level components
+rectangle "Input" as input {
+  [Document Files\n(Receipts & Payslips)] as docFiles
+  [Historical Data CSV] as historicalCsv
+}
+
+rectangle "Processing Pipeline" as pipeline {
+  [Document AI Processing] as docProcessing
+  [Data Extraction & Loading] as dataLoading
+  [Historical Data Enrichment] as dataEnrichment
+}
+
+rectangle "Storage" as storage {
+  database "transactions.db" as transactionsDb
+  database "tax_insights.db" as insightsDb
+  database "Weaviate Vector DB" as weaviateDb
+  note bottom of weaviateDb
+    Running locally in Docker
+  end note
+}
+
+rectangle "Analysis" as analysis {
+  [Vector Similarity Search] as vectorSearch
+  [Semantic Example Queries] as semanticSearch
+  note bottom of semanticSearch
+    Handles only 10 pre-defined
+    example questions
+  end note
+}
+
+rectangle "Output" as output {
+  [Tax Insights Report] as report
+}
+
+' Main flow
+user --> input : provides
+input --> pipeline : processes
+pipeline --> storage : populates
+storage --> analysis : queries
+analysis --> output : generates
+output --> user : delivered as text
+
+' Core paths
+docFiles --> docProcessing
+historicalCsv --> dataEnrichment
+docProcessing --> dataLoading
+dataLoading --> transactionsDb
+dataEnrichment --> insightsDb
+transactionsDb --> weaviateDb
+insightsDb --> weaviateDb
+weaviateDb --> vectorSearch
+insightsDb --> semanticSearch
+vectorSearch --> report
+semanticSearch --> report
+
+note "Main.py orchestrates the entire system flow" as mainPyNote
+
+@enduml 

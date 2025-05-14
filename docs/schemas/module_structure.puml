@@ -1,0 +1,105 @@
+@startuml Tax Processing System - Module Structure
+
+' Define styling
+skinparam backgroundColor white
+skinparam packageStyle folder
+skinparam monochrome false
+skinparam shadowing false
+skinparam defaultFontSize 14
+
+' Main components
+package "app" {
+  [main.py] as main
+
+  package "ingestion" {
+    [processor.py] as processor
+  }
+  
+  package "database" {
+    [db.py] as db
+    [models.py] as models
+  }
+  
+  package "load_transactions" as loadTransactions {
+    [load_transactions.py] as loadTransactionsFile
+  }
+  
+  package "batch" {
+    [process_enriched_data.py] as processEnriched
+  }
+  
+  package "vector" {
+    [client.py] as client
+    [schema.py] as schema
+    [upsert.py] as upsert
+    [search.py] as search
+    [data_loader.py] as dataLoader
+    [search_api.py] as searchApi
+  }
+  
+  package "semantic" {
+    [search.py] as semanticSearch
+    [examples.py] as examples
+  }
+}
+
+' Relationships
+main --> processor : uses
+main --> db : uses
+main --> loadTransactionsFile : imports
+main --> processEnriched : imports
+main --> client : imports
+main --> schema : imports
+main --> upsert : imports
+main --> search : imports
+main --> dataLoader : imports
+main --> searchApi : imports
+main --> semanticSearch : imports
+main --> examples : imports
+
+processor --> models : uses
+db --> models : uses
+loadTransactionsFile --> db : uses
+loadTransactionsFile --> models : uses
+processEnriched --> db : uses
+client --> db : uses
+schema --> client : uses
+upsert --> client : uses
+search --> client : uses
+dataLoader --> db : uses
+searchApi --> search : uses
+semanticSearch --> db : uses
+examples --> semanticSearch : uses
+
+note top of main
+  main.py is the orchestrator that ties
+  all components together and provides
+  the command-line interface
+end note
+
+note bottom of ingestion
+  Handles communication with Google Document AI
+  and processes document extraction
+end note
+
+note bottom of database
+  Core data models and database operations
+  for transactions.db
+end note
+
+note bottom of batch
+  Processes historical data into
+  tax_insights.db for recommendations
+end note
+
+note bottom of vector
+  Vector similarity search components
+  using Weaviate
+end note
+
+note bottom of semantic
+  Basic semantic search for
+  example queries only
+end note
+
+@enduml 
