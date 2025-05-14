@@ -158,18 +158,6 @@ def get_user_class_definition() -> Dict[str, Any]:
                 "description": "Confidence level for cluster recommendation",
                 "indexInverted": True,
             },
-            {
-                "name": "uplift_message",
-                "dataType": ["string"],
-                "description": "Uplift insight message for the user",
-                "indexInverted": True,
-            },
-            {
-                "name": "uplift_confidence_level",
-                "dataType": ["string"],
-                "description": "Confidence level for uplift insight",
-                "indexInverted": True,
-            },
             # Vector metadata
             {
                 "name": "embedding_model",
@@ -320,6 +308,24 @@ def get_transaction_class_definition() -> Dict[str, Any]:
                 "dataType": ["string"],
                 "description": "Category of tax deduction",
                 "indexInverted": True,
+            },
+            # Uplift insights
+            {
+                "name": "uplift_message",
+                "dataType": ["string"],
+                "description": "Uplift insight message for the transaction category",
+                "indexInverted": True,
+            },
+            {
+                "name": "uplift_confidence_level",
+                "dataType": ["string"],
+                "description": "Confidence level for uplift insight",
+                "indexInverted": True,
+            },
+            {
+                "name": "uplift_pct",
+                "dataType": ["number"],
+                "description": "Percentage uplift for the transaction category",
             },
             # Vector metadata
             {

@@ -73,10 +73,6 @@ class EnrichedUser(BaseModel):
     cluster_recommendation: Optional[str] = None
     cluster_confidence_level: Optional[str] = None
     
-    # Essential fields from uplift insights
-    uplift_message: Optional[str] = None
-    uplift_confidence_level: Optional[str] = None
-    
     class Config:
         from_attributes = True
 
@@ -175,11 +171,7 @@ class EnrichedDataDB(DatabaseManager):
             
             -- Essential fields from hierarchical recommendations
             cluster_recommendation TEXT,
-            cluster_confidence_level TEXT,
-            
-            -- Essential fields from uplift insights
-            uplift_message TEXT,
-            uplift_confidence_level TEXT
+            cluster_confidence_level TEXT
         )
         ''')
         
@@ -222,9 +214,8 @@ class EnrichedDataDB(DatabaseManager):
             INSERT OR REPLACE INTO enriched_users (
                 user_id, occupation_category, age_range, family_status, region,
                 filing_id, tax_year, filing_date, total_income, total_deductions,
-                refund_amount, cluster_recommendation, cluster_confidence_level,
-                uplift_message, uplift_confidence_level
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                refund_amount, cluster_recommendation, cluster_confidence_level
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 user_data.get('user_id'),
                 user_data.get('occupation_category'),
@@ -238,9 +229,7 @@ class EnrichedDataDB(DatabaseManager):
                 user_data.get('total_deductions'),
                 user_data.get('refund_amount'),
                 user_data.get('cluster_recommendation'),
-                user_data.get('cluster_confidence_level'),
-                user_data.get('uplift_message'),
-                user_data.get('uplift_confidence_level')
+                user_data.get('cluster_confidence_level')
             ))
             return True
         except Exception as e:
@@ -257,7 +246,7 @@ class EnrichedDataDB(DatabaseManager):
                 quarter, year, occupation_category, family_status, is_deductible, 
                 deduction_confidence_score, deduction_recommendation, deduction_category,
                 uplift_message, uplift_confidence_level, uplift_pct
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 transaction_data.get('transaction_id'),
                 transaction_data.get('user_id'),

@@ -24,7 +24,7 @@ from app.vector.client import get_weaviate_client
 from app.vector.schema import create_schema, delete_schema
 from app.vector.upsert import add_or_update_user, add_or_update_transaction
 from app.vector.search import search_similar_users, search_similar_transactions, search_transactions_for_user
-from app.vector.data_loader import get_user_by_id, get_transaction_by_id, fetch_users, fetch_transactions, fetch_historical_users_only, fetch_historical_transactions_only
+from app.vector.data_loader import get_user_by_id, get_transaction_by_id, fetch_users, fetch_transactions, fetch_historical_users_only, fetch_historical_transactions_only, get_user_transactions
 from app.vector.search_api import TaxInsightSearchAPI
 
 # Import semantic package instead of implementing it directly
@@ -633,8 +633,9 @@ def run_vector_search_pipeline(skip_ingestion=False):
                 search_user = input_user.copy()
                 search_user['user_id'] = search_user['search_id']
                 
+                # Find similar historical users
                 print("Finding similar historical users...")
-                similar_users = search_similar_users(client, user_data=search_user, limit=10)  # Get more results initially
+                similar_users = search_similar_users(client, user_data=search_user, limit=5)  # Get more results initially
                 
                 # Filter out any exact self-matches (similarity = 1.0)
                 # Also filter out low-quality matches below 0.4 similarity
@@ -658,21 +659,19 @@ def run_vector_search_pipeline(skip_ingestion=False):
                     user_data = get_user_by_id(user_id) if user_id else user_result.data
                     
                     if user_data:
+                        # Check if user has cluster recommendations
                         has_cluster = user_data.get('cluster_recommendation') not in [None, '']
-                        has_uplift = user_data.get('uplift_message') not in [None, '']
                         
                         print(f"[DEBUG] User {user_id} has cluster_recommendation: {has_cluster}")
-                        print(f"[DEBUG] User {user_id} has uplift_message: {has_uplift}")
                         
                         # Extract recommendations
                         cluster_rec = user_data.get('cluster_recommendation', '')
-                        uplift_msg = user_data.get('uplift_message', '')
                         
                         # Create a unique signature for this recommendation set
-                        rec_signature = f"{cluster_rec}||{uplift_msg}"
+                        rec_signature = f"{cluster_rec}"
                         
-                        # Only include users with at least one recommendation AND unique recommendation signature
-                        if (has_cluster or has_uplift) and rec_signature not in seen_recommendations:
+                        # Only include users with cluster recommendations AND unique recommendation signature
+                        if has_cluster and rec_signature not in seen_recommendations:
                             user_data["similarity_score"] = user_result.similarity
                             users_with_recommendations.append(user_data)
                             seen_recommendations.add(rec_signature)
@@ -683,6 +682,9 @@ def run_vector_search_pipeline(skip_ingestion=False):
                 # Update similar_users to only include those with recommendations
                 print(f"[DEBUG] Found {len(users_with_recommendations)} users with unique recommendations out of {len(similar_users)} similar users")
                 
+                # Limit to top 3 users with recommendations
+                users_with_recommendations = users_with_recommendations[:3]
+
                 # Display the filtered results
                 print(f"Found {len(users_with_recommendations)} similar historical users with recommendations:")
                 
@@ -700,10 +702,6 @@ def run_vector_search_pipeline(skip_ingestion=False):
                         print(f"\nRecommendation: {user_data.get('cluster_recommendation')}")
                         if user_data.get("cluster_confidence_level"):
                             print(f"Confidence: {user_data.get('cluster_confidence_level')}")
-                    if user_data.get("uplift_message"):
-                        print(f"\nUplift Message: {user_data.get('uplift_message')}")
-                        if user_data.get("uplift_confidence_level"):
-                            print(f"Confidence: {user_data.get('uplift_confidence_level')}")
                 
                 # Print a separator between searches
                 print("\n" + "-"*80)
@@ -729,7 +727,7 @@ def run_vector_search_pipeline(skip_ingestion=False):
                         search_tx['transaction_id'] = f"INPUT-{tx['transaction_id']}"
                         
                         print("\nFinding similar historical transactions...")
-                        similar_txs_results = search_similar_transactions(client, transaction_data=search_tx, limit=10)
+                        similar_txs_results = search_similar_transactions(client, transaction_data=search_tx, limit=5)
                         
                         txs_with_recommendations = [] # Reset for each input transaction
                         for tx_result in similar_txs_results: # Iterate directly over raw results
@@ -752,6 +750,9 @@ def run_vector_search_pipeline(skip_ingestion=False):
                                     rec_signature = f"{is_deductible}||{deduction_cat}||{deduction_rec}"
                                     all_seen_tx_recommendations.add(rec_signature) # Keep populating this for profile search
                         
+                        # Limit to top 3 transactions
+                        txs_with_recommendations = txs_with_recommendations[:3]
+
                         print(f"Found {len(txs_with_recommendations)} similar historical transactions (no uniqueness filter applied):")
                         
                         for l, tx_data_item in enumerate(txs_with_recommendations, 1):
@@ -771,11 +772,13 @@ def run_vector_search_pipeline(skip_ingestion=False):
                                     print(f"Deduction Recommendation: {tx_data_item.get('deduction_recommendation')}")
                                 if tx_data_item.get("deduction_category"):
                                     print(f"Deduction Category: {tx_data_item.get('deduction_category')}")
+                            if tx_data_item.get("uplift_message"):
+                                print(f"Uplift Message: {tx_data_item.get('uplift_message')}")
                     
                     print("\n" + "-"*80)
                     print(f"\nFinding historical transactions similar to {input_user['user_id']}'s profile...")
                     
-                    relevant_txs_results = search_transactions_for_user(client, user_data=search_user, limit=10)
+                    relevant_txs_results = search_transactions_for_user(client, user_data=search_user, limit=5)
                     
                     profile_txs_with_recommendations = [] # Reset for profile search
                     seen_profile_tx_recommendations = set() # Still useful to avoid exact duplicates in *this specific list*
@@ -812,6 +815,9 @@ def run_vector_search_pipeline(skip_ingestion=False):
                                 else:
                                     print(f"[DEBUG] Skipping duplicate profile-based tx (no deduction info, existing ID): {tx_id}")
 
+                    # Limit to top 3 profile-based transactions
+                    profile_txs_with_recommendations = profile_txs_with_recommendations[:3]
+
                     print(f"Found {len(profile_txs_with_recommendations)} relevant historical transactions (filter for unique recommendations from profile search):")
                     
                     for m, tx_data_item in enumerate(profile_txs_with_recommendations, 1):
@@ -831,6 +837,8 @@ def run_vector_search_pipeline(skip_ingestion=False):
                                 print(f"Deduction Recommendation: {tx_data_item.get('deduction_recommendation')}")
                             if tx_data_item.get("deduction_category"):
                                 print(f"Deduction Category: {tx_data_item.get('deduction_category')}")
+                            if tx_data_item.get("uplift_message"):
+                                print(f"Uplift Message: {tx_data_item.get('uplift_message')}")
         
         finally:
             if client:

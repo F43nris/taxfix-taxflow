@@ -314,11 +314,11 @@ class TaxInsightSearchAPI:
         # Get user's transactions
         user_transactions = get_user_transactions(user_id)
         
-        # Find similar users
-        similar_users = self.find_similar_users(user_data=user_data, limit=5)
+        # Find similar users (limit to 3)
+        similar_users = self.find_similar_users(user_data=user_data, limit=3)
         
-        # Find potential deductions
-        deductible_transactions = self.find_deductible_transactions(user_id=user_id)
+        # Find potential deductions (limit to 3)
+        deductible_transactions = self.find_deductible_transactions(user_id=user_id, limit=3)
         
         # Compile recommendations
         recommendations = {
@@ -326,8 +326,7 @@ class TaxInsightSearchAPI:
             "transaction_count": len(user_transactions),
             "similar_users": similar_users,
             "potential_deductions": deductible_transactions,
-            "cluster_recommendation": user_data.get("cluster_recommendation"),
-            "uplift_message": user_data.get("uplift_message")
+            "cluster_recommendation": user_data.get("cluster_recommendation")
         }
         
         return recommendations
