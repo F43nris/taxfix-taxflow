@@ -24,23 +24,21 @@ df['refund_per_income'] = df['refund_amount'] / df['total_income']
 df['deduction_ratio'] = df['total_deductions'] / df['total_income']
 
 # Generate category statistics to use throughout analysis
-category_stats = df.groupby('category').agg({
-    'transaction_id': 'count',
-    'amount': ['mean', 'sum'],
-    'refund_amount': ['mean'],
-    'total_income': ['mean']
+# Aggregate at user-category level to avoid double-counting refunds
+user_cat = df.groupby(['user_id', 'category']).agg({
+    'amount': 'sum',
+    'refund_amount': 'first'  # refund_amount is user-level, so take first (or mean)
 }).reset_index()
 
-# Flatten multi-level columns
-category_stats.columns = ['category', 'transaction_count', 'avg_amount', 'total_spent', 
-                         'avg_refund', 'avg_income']
+# Now, for each category, sum the amounts and refunds (refunds only counted once per user)
+category_stats = user_cat.groupby('category').agg({
+    'amount': 'sum',
+    'refund_amount': 'sum'
+}).reset_index()
 
-# Calculate derived metrics - MODIFIED to show actual tax benefit ratio
-# Calculate the direct tax benefit as a percentage of the expense
-category_stats['tax_benefit_ratio'] = (category_stats['avg_refund'] / category_stats['avg_amount']) * 100
-# Cap the tax benefit at 100% to reflect reality
-category_stats['tax_benefit_ratio'] = category_stats['tax_benefit_ratio'].clip(upper=100)
-category_stats['spending_share'] = category_stats['total_spent'] / category_stats['total_spent'].sum()
+# Calculate derived metrics - show actual tax benefit ratio (no capping)
+category_stats['tax_benefit_ratio'] = (category_stats['refund_amount'] / category_stats['amount']) * 100
+category_stats['spending_share'] = category_stats['amount'] / category_stats['amount'].sum()
 
 # Save category statistics
 category_stats.to_csv(os.path.join(results_dir, 'category_statistics.csv'), index=False)
@@ -57,9 +55,11 @@ def get_confidence_level(sample_size):
     else:
         return "High"
 
-# Add confidence level to category stats
-category_stats['confidence_level'] = category_stats['transaction_count'].apply(get_confidence_level)
-category_stats['user_count'] = df.groupby('category')['user_id'].nunique().values
+# Calculate user count per category for confidence level
+user_counts = user_cat.groupby('category')['user_id'].nunique().reset_index()
+user_counts.columns = ['category', 'user_count']
+category_stats = category_stats.merge(user_counts, on='category', how='left')
+category_stats['confidence_level'] = category_stats['user_count'].apply(get_confidence_level)
 
 # Function to prepare user-year level data
 def prepare_user_year_data(df):
@@ -344,16 +344,17 @@ def generate_enhanced_tax_insights(user_year_results, df, category_summary):
     # Get average transaction amount per category
     avg_amounts = df.groupby('category')['amount'].mean().to_dict()
     
-    # Get refund efficiency metrics - MODIFIED to show actual tax benefit
-    refund_efficiency = df.groupby('category').agg({
-        'amount': 'mean',
-        'refund_amount': 'mean',
-        'total_income': 'mean'
+    # Get refund efficiency metrics - use user-level aggregation to avoid double-counting
+    user_cat = df.groupby(['user_id', 'category']).agg({
+        'amount': 'sum',
+        'refund_amount': 'first'  # refund_amount is user-level, so take first (or mean)
+    }).reset_index()
+    refund_efficiency = user_cat.groupby('category').agg({
+        'amount': 'sum',
+        'refund_amount': 'sum'
     })
-    # Calculate the actual tax benefit as a percentage of the expense
+    # Calculate the actual tax benefit as a percentage of the expense (no capping)
     refund_efficiency['tax_benefit_pct'] = (refund_efficiency['refund_amount'] / refund_efficiency['amount']) * 100
-    # Cap the tax benefit at 100% to reflect reality
-    refund_efficiency['tax_benefit_pct'] = refund_efficiency['tax_benefit_pct'].clip(upper=100)
     refund_efficiency = refund_efficiency['tax_benefit_pct'].to_dict()
     
     # Get average income for scaling effects
