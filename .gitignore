@@ -180,4 +180,5 @@ app/data/*
 .idea/
 .vscode/
 
-notebooks/data/*
+notebooks/processed_data/*
+notebooks/unprocessed_data/*
