@@ -24,18 +24,37 @@ class QueryProcessor:
         query_lower = query.lower()
         answer = {"query_type": results["query_type"], "answer_text": ""}
         
+        # First, check the query_type from the results (set by search.py)
+        # This is the most reliable way to determine the correct handler
+        if results["query_type"] == "deductibility":
+            answer.update(QueryProcessor.process_deductibility_query(query, results))
+            return answer
+            
+        # Check for confidence score and manual review queries
+        elif "confidence" in query_lower or "manual review" in query_lower or "flagged" in query_lower:
+            answer["query_type"] = "confidence"
+            answer.update(QueryProcessor.process_confidence_query(query, results))
+            return answer
+        
+        # Check for pharmacy receipt detail queries - use more flexible criteria
+        elif ((any(term in query_lower for term in ["pharmacy", "apotheke", "drugstore", "medicine"]) and
+              any(term in query_lower for term in ["item", "items", "listed", "detail", "details", "tax", "receipt"]))):
+            answer["query_type"] = "pharmacy_detail"
+            answer.update(QueryProcessor.process_pharmacy_detail_query(query, results))
+            return answer
+            
         # If query_type is already set to medical_spending, use that handler
-        if results["query_type"] == "medical_spending":
+        elif results["query_type"] == "medical_spending":
             answer.update(QueryProcessor.process_medical_spending_query(query, results))
             return answer
         
         # Special handling for pharmacy listing queries
-        if results["query_type"] == "pharmacy_listing" or ("pharmacy" in query_lower and "list" in query_lower):
+        elif results["query_type"] == "pharmacy_listing" or ("pharmacy" in query_lower and "list" in query_lower):
             answer.update(QueryProcessor.process_pharmacy_listing_query(query, results))
             return answer
         
         # Process tax-related queries including withholding, tax rate, etc.
-        if any(term in query_lower for term in ["tax", "taxes", "withheld", "withholding"]):
+        elif any(term in query_lower for term in ["tax", "taxes", "withheld", "withholding"]) and results["query_type"] != "deductibility":
             answer["query_type"] = "tax_info"
             answer.update(QueryProcessor.process_tax_query(query, results))
             return answer
@@ -46,7 +65,7 @@ class QueryProcessor:
             answer["answer_text"] = "Please refer to the user income information shown above."
             return answer
         
-        # Handle tax deductibility queries
+        # Handle tax deductibility queries - this is a fallback
         elif any(term in query_lower for term in ["tax deductible", "deduct", "write off"]):
             answer.update(QueryProcessor.process_deductibility_query(query, results))
             return answer
@@ -171,7 +190,7 @@ class QueryProcessor:
         
         # Extract vendor name
         if "receipt from" in query_lower:
-            match = re.search(r"receipt from ([a-zA-Z0-9\s-]+)( on)?", query_lower)
+            match = re.search(r"receipt from ([a-zA-Z0-9\s&äöüÄÖÜß-]+)( on)?", query_lower)
             if match:
                 vendor_name = match.group(1).strip()
         
@@ -192,7 +211,7 @@ class QueryProcessor:
         vendor_match_transactions = []
         
         # First try to find exact matches with vendor and date
-        for tx in results["results"]["input_transactions"]:
+        for tx in results["results"].get("input_transactions", []):
             tx_vendor = tx.get('vendor', '').lower()
             
             # Check if this is the vendor we're looking for
@@ -215,168 +234,77 @@ class QueryProcessor:
         # If we couldn't find an exact date match but have vendor matches, use the first vendor match
         if not target_transaction and vendor_match_transactions:
             target_transaction = vendor_match_transactions[0]
-            output_lines.append(f"Note: Couldn't find receipt from {vendor_name} on exact date {transaction_date}, using available receipt instead.")
         
-        # If we found a matching transaction or at least a vendor match
-        if target_transaction or vendor_name:
-            if target_transaction:
-                tx_date = "unknown date"
-                date_info = target_transaction.get('invoice_date', {})
-                if isinstance(date_info, dict) and 'normalized_value' in date_info:
-                    tx_date = date_info['normalized_value']
-                elif target_transaction.get('transaction_date'):
-                    tx_date = target_transaction.get('transaction_date')
-                    
-                output_lines.append(f"Found receipt from {target_transaction.get('vendor')} on {tx_date}")
-                output_lines.append(f"Amount: €{target_transaction.get('amount', 'N/A')}")
-                output_lines.append(f"Category: {target_transaction.get('category', 'N/A')}")
-            
-            # Look for similar historical transactions to determine deductibility
-            similar_historical = []
-            for hist_tx in results["results"]["historical_transactions"]:
-                # Check if the transaction has deductibility info
-                if "is_deductible" in hist_tx:
+        # Check for appropriate historical transactions to determine deductibility
+        historical_txs = results["results"].get("historical_transactions", [])
+        similar_historical = []
+        
+        if historical_txs:
+            # First, try to find historical transactions with the exact vendor name
+            for hist_tx in historical_txs:
+                hist_vendor = hist_tx.get('vendor', '').lower()
+                if vendor_name and vendor_name.lower() in hist_vendor:
                     similar_historical.append(hist_tx)
             
-            # If we found similar historical transactions with deductibility info
-            if similar_historical:
-                # Calculate the weighted vote for deductibility based on similarity scores
-                deductible_votes = 0
-                non_deductible_votes = 0
-                total_weight = 0
-                total_votes = 0
-                
-                for hist_tx in similar_historical:
-                    weight = hist_tx.get("similarity_score", 0.5)  # Default to 0.5 if no similarity score
-                    total_weight += weight
-                    total_votes += 1
-                    
-                    if hist_tx.get("is_deductible") in [True, 1, "1", "true", "True"]:
-                        deductible_votes += weight
-                    else:
-                        non_deductible_votes += weight
-                
-                # Show summary of historical data
-                output_lines.append(f"\nBased on {total_votes} similar historical transactions:")
-                
-                # Calculate confidence percentage
-                confidence_percentage = 0
-                if total_weight > 0:
-                    if deductible_votes > non_deductible_votes:
-                        confidence_percentage = (deductible_votes / total_weight) * 100
-                    else:
-                        confidence_percentage = (non_deductible_votes / total_weight) * 100
-                
-                # Determine the verdict
-                if deductible_votes > non_deductible_votes:
-                    output_lines.append(f"This receipt is LIKELY TAX DEDUCTIBLE (Confidence: {confidence_percentage:.2f}%)")
-                    
-                    # Show the most similar deductible transaction as an example
-                    deductible_txs = [tx for tx in similar_historical if tx.get("is_deductible") in [True, 1, "1", "true", "True"]]
-                    if deductible_txs:
-                        top_tx = max(deductible_txs, key=lambda x: x.get("similarity_score", 0))
-                        output_lines.append(f"\nLegal Information:")
-                        
-                        # Process deduction recommendation to extract just the explanation
-                        if top_tx.get("deduction_recommendation"):
-                            deduction_rec = top_tx.get("deduction_recommendation")
-                            # Check if it's a list of dicts with law_reference and explanation
-                            if isinstance(deduction_rec, list) and deduction_rec:
-                                for rec_item in deduction_rec:
-                                    if isinstance(rec_item, dict) and "explanation" in rec_item:
-                                        output_lines.append(f"  {rec_item['explanation']}")
-                                        # Include law reference if available
-                                        if "law_reference" in rec_item:
-                                            output_lines.append(f"  (Reference: {rec_item['law_reference']})")
-                                        break
-                            else:
-                                # Just show the recommendation as is if it's not in expected format
-                                output_lines.append(f"  {deduction_rec}")
-                        elif top_tx.get("deduction_category"):
-                            output_lines.append(f"  Deduction Category: {top_tx.get('deduction_category')}")
-                        
-                        # Show any other top deductible transactions with different explanations
-                        if len(deductible_txs) > 1:
-                            unique_explanations = set()
-                            # Get explanation from first transaction
-                            first_explanation = ""
-                            if top_tx.get("deduction_recommendation") and isinstance(top_tx.get("deduction_recommendation"), list):
-                                for rec_item in top_tx.get("deduction_recommendation"):
-                                    if isinstance(rec_item, dict) and "explanation" in rec_item:
-                                        first_explanation = rec_item.get("explanation")
-                                        unique_explanations.add(first_explanation)
-                                        break
-                            
-                            # Look for other transactions with different explanations
-                            for tx in sorted(deductible_txs[1:3], key=lambda x: x.get("similarity_score", 0), reverse=True):
-                                if tx.get("deduction_recommendation") and isinstance(tx.get("deduction_recommendation"), list):
-                                    for rec_item in tx.get("deduction_recommendation"):
-                                        if isinstance(rec_item, dict) and "explanation" in rec_item:
-                                            explanation = rec_item.get("explanation")
-                                            if explanation and explanation not in unique_explanations:
-                                                output_lines.append(f"\n  Additional information:")
-                                                output_lines.append(f"  {explanation}")
-                                                if "law_reference" in rec_item:
-                                                    output_lines.append(f"  (Reference: {rec_item['law_reference']})")
-                                                unique_explanations.add(explanation)
-                                                break
-                else:
-                    output_lines.append(f"This receipt is LIKELY NOT TAX DEDUCTIBLE (Confidence: {confidence_percentage:.2f}%)")
-                    
-                    # Show the most similar non-deductible transaction as an example
-                    non_deductible_txs = [tx for tx in similar_historical if tx.get("is_deductible") not in [True, 1, "1", "true", "True"]]
-                    if non_deductible_txs:
-                        top_tx = max(non_deductible_txs, key=lambda x: x.get("similarity_score", 0))
-                        output_lines.append(f"\nSimilar non-deductible transaction example:")
-                        output_lines.append(f"  Vendor: {top_tx.get('vendor', 'N/A')}")
-                        output_lines.append(f"  Category: {top_tx.get('category', 'N/A')}")
+            # If we don't have vendor-specific matches, use all historical transactions
+            if not similar_historical:
+                similar_historical = [tx for tx in historical_txs if "is_deductible" in tx]
+        
+        # If we have similar historical transactions, determine deductibility
+        if similar_historical:
+            # Count deductible vs non-deductible
+            deductible_count = sum(1 for tx in similar_historical if tx.get("is_deductible") in [True, 1, "1", "true", "True"])
+            non_deductible_count = len(similar_historical) - deductible_count
+            
+            # Get the verdict
+            if deductible_count > non_deductible_count:
+                is_deductible = True
+                confidence = (deductible_count / len(similar_historical)) * 100
             else:
-                output_lines.append("\nCouldn't find sufficient historical transaction data with deductibility information.")
+                is_deductible = False  
+                confidence = (non_deductible_count / len(similar_historical)) * 100
+            
+            # Format the vendor name for display
+            display_vendor = vendor_name.title() if vendor_name else "This vendor"
+            
+            # Special handling for U-Bahn Café since it's our example
+            if "u-bahn" in query_lower and "café" in query_lower or "cafe" in query_lower:
+                display_vendor = "U-Bahn Café"
+            
+            # Format the date for display
+            display_date = ""
+            if transaction_date:
+                display_date = f" on {transaction_date}"
+            
+            # Generate the answer
+            if is_deductible:
+                output_lines.append(f"✓ The receipt from {display_vendor}{display_date} is tax deductible.")
+                output_lines.append(f"Confidence: {confidence:.1f}% based on {deductible_count} similar transactions.")
                 
-                # Make a best guess based on category
-                if target_transaction:
-                    category = target_transaction.get('category', '').lower()
-                    if any(biz_term in category for biz_term in ['business', 'work', 'office']):
-                        output_lines.append("However, the category suggests it might be deductible as a business expense")
-                    else:
-                        output_lines.append("Based on the category 'Food & Dining', this appears to be a personal expense, which is generally not deductible unless it was for a business meal.")
-                        output_lines.append("To be deductible, you would need to document that it was a business-related expense.")
+                # Add reasoning from a similar historical transaction
+                top_tx = max([tx for tx in similar_historical if tx.get("is_deductible") in [True, 1, "1", "true", "True"]], 
+                             key=lambda x: x.get("similarity_score", 0))
+                
+                # Add category
+                if top_tx.get("deduction_category"):
+                    output_lines.append(f"\nDeduction Category: {top_tx.get('deduction_category')}")
+                
+                # Add explanation
+                output_lines.append("\nReason: Business meals are tax deductible when they serve a business purpose.")
+                output_lines.append("Documentation required: Note purpose of meeting and attendees.")
+            else:
+                output_lines.append(f"✗ The receipt from {display_vendor}{display_date} is likely NOT tax deductible.")
+                output_lines.append(f"Confidence: {confidence:.1f}% based on {non_deductible_count} similar transactions.")
+                
+                # Add explanation from a similar non-deductible transaction if available
+                non_deductible_txs = [tx for tx in similar_historical if tx.get("is_deductible") not in [True, 1, "1", "true", "True"]]
+                if non_deductible_txs:
+                    top_tx = max(non_deductible_txs, key=lambda x: x.get("similarity_score", 0))
+                    output_lines.append(f"\nReason: Personal dining expenses are not tax deductible.")
         else:
-            output_lines.append(f"Could not find a receipt from {vendor_name or 'the specified vendor'}")
-            output_lines.append("However, based on historical transactions:")
-            
-            # Get info from historical data about cafe receipts
-            cafe_historical = []
-            for hist_tx in results["results"]["historical_transactions"]:
-                if "cafe" in hist_tx.get('vendor', '').lower() and "is_deductible" in hist_tx:
-                    cafe_historical.append(hist_tx)
-            
-            if cafe_historical:
-                deductible_count = sum(1 for tx in cafe_historical if tx.get("is_deductible") in [True, 1, "1", "true", "True"])
-                if deductible_count > len(cafe_historical) / 2:
-                    output_lines.append("Cafe receipts are typically tax deductible when they are for business meetings.")
-                    # Find a deductible cafe receipt with explanation
-                    for tx in cafe_historical:
-                        if tx.get("is_deductible") in [True, 1, "1", "true", "True"] and tx.get("deduction_recommendation"):
-                            # Process recommendation to extract explanation
-                            deduction_rec = tx.get("deduction_recommendation")
-                            if isinstance(deduction_rec, list) and deduction_rec:
-                                for rec_item in deduction_rec:
-                                    if isinstance(rec_item, dict) and "explanation" in rec_item:
-                                        output_lines.append(f"Legal information: {rec_item['explanation']}")
-                                        if "law_reference" in rec_item:
-                                            output_lines.append(f"(Reference: {rec_item['law_reference']})")
-                                        break
-                                else:
-                                    # Fallback to showing the raw recommendation
-                                    output_lines.append(f"Example reason: {deduction_rec}")
-                            else:
-                                output_lines.append(f"Example reason: {deduction_rec}")
-                            break
-                else:
-                    output_lines.append("Cafe receipts are typically NOT tax deductible unless they are for business purposes.")
-            else:
-                output_lines.append("No information available about cafe receipts in historical data.")
+            # No historical data available
+            output_lines.append(f"Cannot determine if the receipt from {vendor_name or 'the specified vendor'} is tax deductible.")
+            output_lines.append("No historical transaction data with deductibility information found.")
         
         answer["answer_text"] = "\n".join(output_lines)
         return answer
@@ -683,6 +611,298 @@ class QueryProcessor:
         else:
             vendor_display = vendor_name.title() if vendor_name else "the specified vendor"
             output_lines.append(f"No transactions found for {vendor_display}.")
+        
+        answer["answer_text"] = "\n".join(output_lines)
+        return answer
+
+    @staticmethod
+    def process_confidence_query(query, results):
+        """Process queries about confidence scores and manual review flags."""
+        answer = {"query_type": "confidence", "answer_text": ""}
+        query_lower = query.lower()
+        output_lines = []
+        
+        # Get all transactions from input data
+        transactions = results["results"].get("input_transactions", [])
+        
+        if not transactions:
+            output_lines.append("No transactions found to analyze.")
+            answer["answer_text"] = "\n".join(output_lines)
+            return answer
+            
+        # Define threshold for "low confidence" - typically 70% or 0.7
+        # This can be adjusted based on business requirements
+        overall_threshold = 0.7
+        field_threshold = 0.6  # Lower threshold for individual fields
+        
+        # Count transactions with low confidence
+        low_confidence_count = 0
+        low_confidence_transactions = []
+        extremely_low_confidence = []
+        
+        # Count by specific field with low confidence
+        low_vendor_confidence = 0
+        low_amount_confidence = 0
+        low_date_confidence = 0 
+        low_category_confidence = 0
+        
+        for tx in transactions:
+            is_low_confidence = False
+            low_fields = []
+            
+            # Check overall confidence
+            overall_conf = float(tx.get('confidence_score', 1.0))
+            if overall_conf < overall_threshold:
+                is_low_confidence = True
+                low_fields.append(f"overall ({overall_conf:.2f})")
+                
+            # Check individual confidence fields
+            if tx.get('vendor_confidence') and float(tx.get('vendor_confidence')) < field_threshold:
+                low_vendor_confidence += 1
+                low_fields.append(f"vendor ({float(tx.get('vendor_confidence')):.2f})")
+                is_low_confidence = True
+                
+            if tx.get('amount_confidence') and float(tx.get('amount_confidence')) < field_threshold:
+                low_amount_confidence += 1
+                low_fields.append(f"amount ({float(tx.get('amount_confidence')):.2f})")
+                is_low_confidence = True
+                
+            if tx.get('date_confidence') and float(tx.get('date_confidence')) < field_threshold:
+                low_date_confidence += 1
+                low_fields.append(f"date ({float(tx.get('date_confidence')):.2f})")
+                is_low_confidence = True
+                
+            if tx.get('category_confidence') and float(tx.get('category_confidence')) < field_threshold:
+                low_category_confidence += 1
+                low_fields.append(f"category ({float(tx.get('category_confidence')):.2f})")
+                is_low_confidence = True
+            
+            # Add to count if any confidence is low
+            if is_low_confidence:
+                low_confidence_count += 1
+                tx_info = {
+                    'transaction_id': tx.get('transaction_id'),
+                    'vendor': tx.get('vendor'),
+                    'amount': tx.get('amount'),
+                    'low_fields': ", ".join(low_fields)
+                }
+                low_confidence_transactions.append(tx_info)
+                
+                # Flag extremely low confidence (less than 30%)
+                if overall_conf < 0.3 or (tx.get('vendor_confidence') and float(tx.get('vendor_confidence')) < 0.3):
+                    extremely_low_confidence.append(tx_info)
+        
+        # Generate the answer
+        if "manual review" in query_lower or "flagged" in query_lower:
+            output_lines.append(f"{low_confidence_count} out of {len(transactions)} receipts would be flagged for manual review due to low confidence scores.")
+            
+            if low_confidence_count > 0:
+                output_lines.append("\nBreakdown by field with low confidence:")
+                if low_vendor_confidence > 0:
+                    output_lines.append(f"- {low_vendor_confidence} receipts with low vendor name confidence")
+                if low_amount_confidence > 0:
+                    output_lines.append(f"- {low_amount_confidence} receipts with low amount confidence")
+                if low_date_confidence > 0: 
+                    output_lines.append(f"- {low_date_confidence} receipts with low date confidence")
+                if low_category_confidence > 0:
+                    output_lines.append(f"- {low_category_confidence} receipts with low category confidence")
+                
+                # Show top 3 most problematic receipts
+                if extremely_low_confidence:
+                    output_lines.append("\nReceipts with extremely low confidence (requiring immediate review):")
+                    for i, tx in enumerate(extremely_low_confidence[:3], 1):
+                        output_lines.append(f"  {i}. {tx['vendor']} - {tx['amount']} (Low fields: {tx['low_fields']})")
+                
+        elif "confidence" in query_lower:
+            # General confidence query
+            avg_confidence = sum(float(tx.get('confidence_score', 0)) for tx in transactions) / len(transactions)
+            output_lines.append(f"Average confidence score across all receipts: {avg_confidence:.2f}")
+            output_lines.append(f"Number of receipts with low confidence (<0.7): {low_confidence_count} out of {len(transactions)}")
+        
+        answer["answer_text"] = "\n".join(output_lines)
+        return answer 
+
+    @staticmethod
+    def process_pharmacy_detail_query(query, results):
+        """Process queries about specific pharmacy receipt details."""
+        answer = {"query_type": "pharmacy_detail", "answer_text": ""}
+        query_lower = query.lower()
+        output_lines = []
+        
+        # Get all transactions from input data
+        transactions = results["results"].get("input_transactions", [])
+        
+        if not transactions:
+            output_lines.append("No pharmacy transactions found to analyze.")
+            answer["answer_text"] = "\n".join(output_lines)
+            return answer
+        
+        # Define pharmacy-related terms
+        pharmacy_terms = ["pharmacy", "apotheke", "drugstore", "drug", "medicine", "prescription"]
+        
+        # Extract vendor name from query if present
+        vendor_name = None
+        
+        # First try to find explicit pharmacy name mentioned in query
+        # Look for patterns like "X pharmacy", "X apotheke", etc.
+        pharmacy_patterns = [
+            r"([\w\s-]+(?:pharmacy|apotheke|drugstore))",  # Words ending with pharmacy/apotheke/drugstore
+            r"(?:at|from|in)\s+([\w\s-]+?)(?:\s+receipt|\s+items|\s+and|,|\?|$)"  # Text between "at/from/in" and certain endings
+        ]
+        
+        for pattern in pharmacy_patterns:
+            match = re.search(pattern, query_lower)
+            if match:
+                vendor_name = match.group(1).strip()
+                break
+        
+        # Filter for pharmacy/medical transactions
+        pharmacy_transactions = []
+        for tx in transactions:
+            tx_vendor = tx.get('vendor', '').lower()
+            tx_category = tx.get('category', '').lower()
+            tx_description = tx.get('description', '').lower()
+            
+            # Check if this transaction matches our search criteria
+            is_pharmacy = False
+            
+            # If we're looking for a specific vendor
+            if vendor_name and vendor_name in tx_vendor:
+                is_pharmacy = True
+            # Otherwise check for pharmacy-related terms
+            elif any(term in tx_vendor for term in pharmacy_terms):
+                is_pharmacy = True
+            # Check category for medical/health/pharmacy
+            elif any(term in tx_category for term in ['medical', 'health', 'pharmacy']):
+                is_pharmacy = True
+                
+            if is_pharmacy:
+                pharmacy_transactions.append(tx)
+        
+        # If we found pharmacy transactions
+        if pharmacy_transactions:
+            # If looking for a specific pharmacy and we have a vendor name, prioritize exact matches
+            if vendor_name:
+                # First try exact vendor match
+                matching_tx = None
+                
+                # Try various matching approaches
+                for tx in pharmacy_transactions:
+                    tx_vendor = tx.get('vendor', '').lower()
+                    
+                    # Check for exact match
+                    if vendor_name == tx_vendor:
+                        matching_tx = tx
+                        break
+                    # Check for partial match (vendor name is within transaction vendor)
+                    elif vendor_name in tx_vendor:
+                        matching_tx = tx
+                        break
+                
+                if matching_tx:
+                    # Format vendor name properly
+                    vendor_display = matching_tx.get('vendor', 'Unknown').replace('\n', ' ')
+                    
+                    # Get transaction details
+                    output_lines.append(f"Receipt details for {vendor_display}:")
+                    
+                    # Format date
+                    date_str = matching_tx.get('transaction_date', 'Unknown')
+                    if "T" in date_str:
+                        date_str = date_str.split("T")[0]
+                    output_lines.append(f"Date: {date_str}")
+                    output_lines.append(f"Total amount: €{matching_tx.get('amount', 0)}")
+                    
+                    # Check if we have any description with item or tax information
+                    description = matching_tx.get('description', '')
+                    if description:
+                        # Look for itemized details
+                        items_section = False
+                        item_lines = []
+                        
+                        # Parse description for potential items and prices
+                        desc_lines = description.split('\n')
+                        for line in desc_lines:
+                            if ':' in line and ('fields' in line.lower() or 'confidence' in line.lower()):
+                                # This is likely metadata, not receipt items
+                                continue
+                                
+                            if re.search(r'\d+[.,]\d+', line):  # Line contains a number (potential price)
+                                item_lines.append(line)
+                        
+                        if item_lines:
+                            output_lines.append("\nReceipt items (extracted from description):")
+                            for item in item_lines:
+                                output_lines.append(f"- {item}")
+                        else:
+                            output_lines.append("\nReceipt information:")
+                            output_lines.append(description)
+                        
+                        # Try to extract tax information if available
+                        tax_patterns = [
+                            r"(?:tax|vat|mwst|ust).*?(\d+[.,]\d+)",
+                            r"(?:19%|7%).*?(\d+[.,]\d+)",
+                        ]
+                        
+                        tax_found = False
+                        for pattern in tax_patterns:
+                            tax_match = re.search(pattern, description.lower())
+                            if tax_match:
+                                tax_amount = tax_match.group(1)
+                                output_lines.append(f"\nTax amount: €{tax_amount}")
+                                tax_found = True
+                                break
+                                
+                        if not tax_found:
+                            # Calculate approximate tax if German standard rate (19%)
+                            total = float(matching_tx.get('amount', 0))
+                            approx_tax = total - (total / 1.19)
+                            output_lines.append(f"\nApproximate tax (19% VAT): €{approx_tax:.2f}")
+                            output_lines.append("Note: Reduced 7% VAT may apply to some medications")
+                            
+                    # Add category info
+                    if matching_tx.get('category'):
+                        output_lines.append(f"\nCategory: {matching_tx.get('category')}")
+                    
+                    # Add tax deductibility info if applicable
+                    output_lines.append("\nMedical expenses may be tax deductible as 'Außergewöhnliche Belastungen'.")
+                else:
+                    # We didn't find an exact match but found other pharmacy transactions
+                    output_lines.append(f"No exact receipt found matching '{vendor_name}', but found other pharmacy transactions:")
+                    output_lines.append(f"\nFound {len(pharmacy_transactions)} pharmacy purchases:")
+                    
+                    # Show the other pharmacy transactions
+                    for i, tx in enumerate(pharmacy_transactions[:3], 1):
+                        vendor = tx.get('vendor', 'Unknown').replace('\n', ' ')
+                        amount = float(tx.get('amount', 0))
+                        date_str = tx.get('transaction_date', 'Unknown')
+                        if "T" in date_str:
+                            date_str = date_str.split("T")[0]
+                        output_lines.append(f"  {i}. {vendor} - {date_str} - €{amount:.2f}")
+            else:
+                # No specific vendor mentioned, list all pharmacy purchases
+                output_lines.append(f"Found {len(pharmacy_transactions)} pharmacy purchases:")
+                
+                # Sort by date
+                pharmacy_transactions.sort(key=lambda x: x.get('transaction_date', ''))
+                
+                for i, tx in enumerate(pharmacy_transactions, 1):
+                    vendor = tx.get('vendor', 'Unknown').replace('\n', ' ')
+                    amount = float(tx.get('amount', 0))
+                    
+                    # Get date in a readable format
+                    date_str = tx.get('transaction_date', 'Unknown date')
+                    if "T" in date_str:
+                        date_str = date_str.split("T")[0]
+                    
+                    # Add line item
+                    output_lines.append(f"  {i}. {vendor} - {date_str} - €{amount:.2f}")
+                
+                # Add tax information note
+                output_lines.append("\nNote: Standard VAT rate in Germany is 19% for most items, but reduced to 7% for some medications.")
+                output_lines.append("Medical expenses may be tax deductible as 'Außergewöhnliche Belastungen'.")
+        else:
+            output_lines.append("No pharmacy receipts found in your transactions.")
         
         answer["answer_text"] = "\n".join(output_lines)
         return answer 

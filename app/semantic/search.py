@@ -92,8 +92,8 @@ class SemanticSearch:
                 any(term in query_lower for term in ["income", "salary", "earn", "received", "job", "pay"])
             )
             
-            # For tax-related queries, we don't need historical data
-            tax_related_query = any(term in query_lower for term in ["tax", "taxes", "withheld", "withholding", "deduct", "deduction"])
+            # For tax-related queries, we don't need historical data UNLESS it's about deductibility
+            tax_related_query = any(term in query_lower for term in ["tax", "taxes", "withheld", "withholding"])
             
             # For medical/pharmacy listing queries, we don't need historical data
             medical_terms = [
@@ -102,6 +102,27 @@ class SemanticSearch:
             ]
             medical_query = any(term in query_lower for term in medical_terms)
             
+            # Check specifically for tax deductibility queries FIRST - BEFORE other classifications
+            # These queries DO need historical data
+            if "tax deductible" in query_lower or "deductible" in query_lower or ("receipt" in query_lower and any(tax_word in query_lower for tax_word in ["tax", "taxes"])):
+                logger.debug("DETECTED TAX DEDUCTIBILITY QUERY: Setting query_type=deductibility, requires_historical_data=True")
+                results["query_type"] = "deductibility"
+                results["requires_historical_data"] = True
+                
+                # Also fetch historical transactions directly
+                if self.api.client:
+                    try:
+                        historical_transactions = self.api.find_similar_transactions(
+                            query_text=query,
+                            limit=15  # Get more transactions for deductibility analysis
+                        )
+                        logger.debug(f"Found {len(historical_transactions)} historical transactions for deductibility query")
+                        results["results"]["historical_transactions"] = historical_transactions
+                    except Exception as e:
+                        logger.error(f"Error fetching historical transactions: {str(e)}")
+                return results
+            
+            # For medical/pharmacy listing queries, we don't need historical data
             if medical_query and ("list" in query_lower or "show" in query_lower or "find" in query_lower or 
                                "spending" in query_lower or "expenses" in query_lower):
                 results["is_personal_query"] = True
@@ -111,12 +132,12 @@ class SemanticSearch:
             
             # Determine if we need historical data at all
             need_comparison = any(term in query_lower for term in ["compare", "similar", "like", "other", "average", "normal", "typical", "should"])
-            need_tax_advice = any(term in query_lower for term in ["claim", "refund"]) and not any(term in query_lower for term in ["deduct", "write off"])
+            need_tax_advice = any(term in query_lower for term in ["claim", "refund"])
             
             # If it's a pure personal spending/income query or tax query without comparison needs, skip historical
             if (pure_personal_spending or pure_personal_income or tax_related_query) and not (need_comparison or need_tax_advice):
                 results["requires_historical_data"] = False
-                
+            
             # Calculate embeddings for similarity scoring of input data
             query_embedding = None
             if self.api.client:  # Only if we have a client for embedding
@@ -139,6 +160,28 @@ class SemanticSearch:
             input_transactions = [dict(row) for row in input_cursor.fetchall()]
             logger.debug(f"Loaded {len(input_transactions)} transactions from database")
             input_conn.close()
+            
+            # Check for confidence score and manual review queries - these don't need historical data
+            if any(term in query_lower for term in ["confidence", "confidence score", "manual review", "flagged"]):
+                logger.debug("DETECTED CONFIDENCE/MANUAL REVIEW QUERY: Setting query_type=confidence, requires_historical_data=False")
+                results["query_type"] = "confidence"
+                results["requires_historical_data"] = False
+                # For these queries, we want all available transactions
+                results["results"]["input_transactions"] = input_transactions
+                return results
+            
+            # Check for pharmacy receipt detail queries - make it more flexible
+            pharmacy_terms = ["pharmacy", "apotheke", "drugstore", "medicine", "prescription", "medical"]
+            detail_terms = ["item", "items", "listed", "detail", "details", "purchase", "receipt", "tax", "paid"]
+            
+            if (any(term in query_lower for term in pharmacy_terms) and 
+                any(term in query_lower for term in detail_terms)):
+                logger.debug("DETECTED PHARMACY DETAIL QUERY: Setting query_type=pharmacy_detail, requires_historical_data=False")
+                results["query_type"] = "pharmacy_detail"
+                results["requires_historical_data"] = False
+                # We need all transactions for this
+                results["results"]["input_transactions"] = input_transactions
+                return results
             
             # Add additional tax information to users
             for user in input_users:
@@ -469,6 +512,7 @@ class SemanticSearch:
                         limit=25
                     )
                     results["results"]["historical_transactions"] = historical_transactions
+                    results["results"]["input_users"] = input_users
                     results["results"]["input_transactions"] = input_transactions
             
             # If query type is still unknown, do both searches

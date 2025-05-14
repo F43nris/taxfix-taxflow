@@ -2,7 +2,7 @@
 Example semantic query runner for demonstration purposes.
 """
 from app.vector.client import get_weaviate_client
-from app.semantic.search import search
+from app.semantic.search import search, SemanticSearch
 from app.semantic.query_processor import QueryProcessor
 
 def run_example_semantic_queries():
@@ -20,8 +20,20 @@ def run_example_semantic_queries():
         return
     
     try:
+        # Create a single SemanticSearch instance with the client
+        searcher = SemanticSearch(client)
+        
         example_queries = [
-            "How much income did I receive from Company X in March 2025?"
+            "What was my total medical spending in Q1 2025?",
+            "How much income did I receive from Company X in March 2025?",
+            "Is the receipt from U-Bahn Café on 10.03.2025 tax deductible?",
+            "List all purchases made at pharmacies in 2025",
+            "What was the total amount of taxes withheld in February 2025?",
+            "How much did I spend at the Apple Store, and for what items?",
+            "Show all receipts categorized under business expenses",
+            "Compare my gross and net income for January and February 2025",
+            "How many receipts were flagged for manual review due to low classification confidence?",
+            "What were the items listed in the Berlin Apotheke receipt, and how much tax was paid on them?"
         ]
         
         for i, query in enumerate(example_queries, 1):
@@ -29,14 +41,21 @@ def run_example_semantic_queries():
             print(f"QUERY {i}/{len(example_queries)}: {query}")
             print(f"{'#'*40}")
             
-            # Run semantic search
-            results = search(query, client=client)
+            # Run semantic search using the shared searcher instance instead of the search helper function
+            results = searcher.search(query)
             
             # Show if this was detected as a personal query
             print(f"Query type: {results['query_type']}")
             print(f"Personal query: {'Yes' if results['is_personal_query'] else 'No'}")
             print(f"Requires historical data: {'Yes' if results['requires_historical_data'] else 'No'}")
             print()
+            
+            # For tax deductibility queries, show how many historical transactions were found
+            if results["query_type"] == "deductibility" and "historical_transactions" in results["results"]:
+                historical_count = len(results["results"]["historical_transactions"])
+                deductible_count = sum(1 for tx in results["results"]["historical_transactions"] 
+                                    if "is_deductible" in tx and tx.get("is_deductible") in [True, 1, "1", "true", "True"])
+                print(f"Found {historical_count} historical transactions ({deductible_count} marked deductible)")
             
             # Display summarized results
             if "input_users" in results["results"] and results["results"]["input_users"]:
@@ -66,6 +85,22 @@ def run_example_semantic_queries():
                     
                     if "similarity_score" in user:
                         print(f"     Similarity: {user.get('similarity_score', 'N/A'):.4f}")
+            
+            # Show historical transactions for deductibility queries
+            if results["query_type"] == "deductibility" and "historical_transactions" in results["results"]:
+                historical_txs = results["results"]["historical_transactions"]
+                if historical_txs:
+                    print(f"\nHistorical Transactions ({len(historical_txs)} results):")
+                    for j, tx in enumerate(historical_txs[:5], 1):
+                        print(f"  {j}. Transaction ID: {tx.get('transaction_id')}")
+                        print(f"     Vendor: {tx.get('vendor', 'N/A')}")
+                        print(f"     Category: {tx.get('category', 'N/A')}")
+                        print(f"     Amount: {tx.get('amount', 'N/A')}")
+                        print(f"     Deductible: {tx.get('is_deductible', 'N/A')}")
+                        if "similarity_score" in tx:
+                            print(f"     Similarity: {tx.get('similarity_score', 'N/A'):.4f}")
+                        if tx.get("deduction_category"):
+                            print(f"     Deduction Category: {tx.get('deduction_category')}")
             
             # Special handling for medical spending queries with quarterly breakdown
             if results["query_type"] == "medical_spending" and "quarterly_breakdown" in results:
@@ -120,7 +155,7 @@ def run_example_semantic_queries():
                             print(f"     ** Medical match in vendor name **")
             
             # Only show historical transaction data if required (no historical users)
-            if results["requires_historical_data"] and "historical_transactions" in results["results"] and results["results"]["historical_transactions"]:
+            if results["requires_historical_data"] and "historical_transactions" in results["results"] and results["results"]["historical_transactions"] and results["query_type"] != "deductibility":
                 print(f"\nHistorical Transactions ({len(results['results']['historical_transactions'])} results):")
                 for j, tx in enumerate(results["results"]["historical_transactions"][:3], 1):
                     print(f"  {j}. Transaction ID: {tx.get('transaction_id')}")
@@ -140,7 +175,7 @@ def run_example_semantic_queries():
             print("\n" + "-"*60)
     
     finally:
-        # Close connection when we're done
+        # Close connection when we're done with all queries
         if client:
             client.close()
             

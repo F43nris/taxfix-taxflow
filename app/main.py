@@ -29,7 +29,7 @@ from app.vector.search_api import TaxInsightSearchAPI
 
 # Import semantic package instead of implementing it directly
 from app.semantic import search as semantic_search
-from app.semantic import run_example_semantic_queries
+from app.semantic.examples import run_example_semantic_queries
 
 def get_file_patterns(doc_type):
     """Get file patterns based on document type."""
@@ -723,13 +723,14 @@ def format_pipeline_results(results: str) -> str:
     print("\n[DEBUG] Finished formatting pipeline results")
     return final_output_str
 
-def run_vector_search_pipeline(skip_ingestion=False):
+def run_vector_search_pipeline(skip_ingestion=False, run_semantic_queries=True):
     """
     Run the vector search pipeline to find similar users and transactions.
     This integrates the functionality from test_with_sample_data.py but processes ALL data.
     
     Args:
         skip_ingestion: If True, skip the data ingestion step and use existing data in Weaviate
+        run_semantic_queries: If True, run semantic queries after vector search
     """
     # Create a StringIO object to capture all output
     output_buffer = io.StringIO()
@@ -1077,6 +1078,13 @@ def run_vector_search_pipeline(skip_ingestion=False):
         
         save_pipeline_results("app/data/processed", results)
         
+        # Run semantic queries if requested
+        if run_semantic_queries:
+            print("\n" + "="*80)
+            print("RUNNING SEMANTIC SEARCH QUERIES")
+            print("="*80)
+            run_example_semantic_queries()
+        
     finally:
         sys.stdout = original_stdout
         output_buffer.close()
@@ -1144,7 +1152,8 @@ def main():
     # If vector-only mode is specified, skip to vector search pipeline
     if args.vector_only:
         print("Running in vector-only mode - skipping document processing and database creation")
-        run_vector_search_pipeline(skip_ingestion=args.skip_ingestion)
+        # Always run semantic queries when in vector-only mode
+        run_vector_search_pipeline(skip_ingestion=args.skip_ingestion, run_semantic_queries=True)
         return
     
     # Default to processing all types if no arguments provided
@@ -1184,10 +1193,10 @@ def main():
         
     # Run vector search pipeline
     if not args.skip_vector:
-        run_vector_search_pipeline(skip_ingestion=args.skip_ingestion)
-
-    # Run example semantic queries if not skipped
-    if not args.skip_examples:
+        # Run vector search pipeline with semantic queries if not skipped
+        run_vector_search_pipeline(skip_ingestion=args.skip_ingestion, run_semantic_queries=not args.skip_examples)
+    # If vector search is skipped but we still want to run semantic queries
+    elif not args.skip_examples:
         run_example_semantic_queries()
 
 if __name__ == "__main__":
