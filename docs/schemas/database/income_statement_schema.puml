@@ -1,0 +1,51 @@
+@startuml Income Statement Schema
+
+' Use class diagram notation which is more compatible
+class "IncomeStatement" as income {
+  + id : string <<PK>>
+  --
+  + file_path : string
+  + employee_address : string
+  + employee_address_confidence : float
+  --
+  + pay_date : datetime
+  + pay_date_confidence : float
+  --
+  + gross_earnings : float
+  + gross_earnings_confidence : float
+  + gross_earnings_ytd : float
+  + gross_earnings_ytd_confidence : float
+  --
+  + net_pay : float
+  + net_pay_confidence : float
+  + net_pay_ytd : float
+  + net_pay_ytd_confidence : float
+  --
+  + occupation_category : string
+  + occupation_category_confidence : float
+  --
+  + tax_items : json  ' Stored as a JSON array
+}
+
+class "TaxItem Structure" as taxitem <<json>> {
+  + tax_type : string
+  + tax_this_period : float
+  + tax_this_period_confidence : float
+  + tax_ytd : float
+  + tax_ytd_confidence : float
+}
+
+income *-- taxitem : contains >
+
+note bottom of income
+  IncomeStatement model stores payslip data
+  including income amounts, tax deductions,
+  occupation data and confidence scores.
+  
+  Tax items are stored as a JSON array within the income statement,
+  not in a separate table.
+  
+  Used for tax filing and user profile creation.
+end note
+
+@enduml 

@@ -1,51 +1,98 @@
-# taxfix-taxflow
-
-# Tax System Database Schema
+# Data Design Documentation
 
 ## Overview
-This database schema represents the foundational data structure of a tax management system. It contains the raw, cleaned data that serves as the source of truth for user tax information, filings, and financial transactions. This schema is the starting point for any tax-related analytics, reporting, or further data processing.
+This documentation describes the data structure of the tax processing system. It contains the core data models that serve as the foundation for user tax information, receipt processing, and financial transactions. This schema is the starting point for any tax-related analytics, reporting, or further data processing.
 
-![alt text](images/bLDDQyCm3BtxLtZjfOMLtKie3MCTXT51ay5kHhELO9ROnHyZeTr_dzDqRPBbCXryU4-ItvFijNLWd2yBca95azewB0cv4vX9XTJ1Hu6pQavv0TRIYaOHdQNtqyqc3Z6dgzKrzM1a2QPcdrWt1P5VLT63l_6PDYXpzSjFgoaXg9nqDPsy9K_xP4B1Kc_HM7eaD4ItOuCpAUPBQfsHAZydQCxz0PpKYd5mc6jJztZ8aHbGEVRG.png)
+![Database Relationships Overview](images/raw_tables_relationships.png)
 
 ## Data Context
-The schema contains three core tables that capture:
-- User demographic information (USERS)
-- Annual tax filing records (TAX_FILINGS)
-- Individual financial transactions (TRANSACTIONS)
+The system processes several types of data:
+- User information extracted from payslips (income statements)
+- Financial transactions extracted from receipts
+- Historical tax data for comparative analysis and recommendations
 
-This raw data structure is designed to:
-- Serve as the primary data source for tax-related operations
-- Enable basic tax filing and transaction tracking
-- Support initial data analysis and reporting
-- Provide a foundation for more complex data transformations or analytics
+These data structures are designed to:
+- Process and extract information from user documents using AI
+- Enable tax filing and deduction identification
+- Support financial analysis and reporting
+- Generate personalized tax recommendations
 
-## Schema Description
+## Core Data Models
 
-### USERS
-Core dimension table containing user demographic information:
-- Primary Key: `user_id` (string) - Unique identifier for each user
-- Occupation category and age range
-- Family status and regional information
+### User Model
+The User model represents taxpayer information consolidated from payslips, providing the foundation for tax filing and recommendations.
 
-### TAX_FILINGS
-Fact table recording annual tax submissions:
-- Primary Key: `filing_id` (string) - Unique identifier for each tax filing
-- Foreign Key: `user_id` (string) - References USERS.user_id
-- Total income and deductions
-- Refund amounts
-- Tax year tracking
+![User Schema](images/user_schema.png)
 
-### TRANSACTIONS
-Fact table storing detailed financial records:
-- Primary Key: `transaction_id` (string) - Unique identifier for each transaction
-- Foreign Key: `user_id` (string) - References USERS.user_id
-- Categorized expenses and income
-- Vendor information and transaction details
-- Amount and date tracking
+**Key attributes:**
+- Primary Key: `user_id` - Unique identifier for each user
+- `occupation_category` - User's occupation information
+- `annualized_income` - Projected annual gross income based on payslips
+- `annualized_tax_deductions` - Projected annual tax deductions
+- `filing_id`, `tax_year` - Tax filing information
 
-## Key Relationships
-- `USERS.user_id` is the primary key in the USERS table
-- `TAX_FILINGS.user_id` is a foreign key referencing `USERS.user_id`
-- `TRANSACTIONS.user_id` is a foreign key referencing `USERS.user_id`
-- Each user can have multiple tax filings (one per tax year)
-- Each user can have multiple transactions
+### Transaction Model
+The Transaction model stores financial activity extracted from receipts, used for categorization, tax deduction analysis, and financial insights.
+
+![Transaction Schema](images/transaction_schema.png)
+
+**Key attributes:**
+- Primary Key: `transaction_id` - Unique identifier for each transaction
+- Foreign Keys: `user_id`, `receipt_id` - Link to user and source receipt
+- `transaction_date`, `amount`, `category` - Core transaction details
+- `vendor`, `description` - Additional transaction context
+- `confidence_score` - AI extraction confidence metrics
+
+### Receipt Model
+The Receipt model stores document extraction results from processed receipts including vendor information, amounts, dates, and confidence scores.
+
+![Receipt Schema](images/receipt_schema.png)
+
+**Key attributes:**
+- Primary Key: `id` - Unique identifier for each receipt
+- `total_amount`, `net_amount`, `total_tax_amount` - Financial values
+- `supplier_name`, `supplier_address` - Vendor information
+- `invoice_date`, `currency` - Transaction details
+- `line_items` - JSON array of individual purchase items
+- Various confidence scores for AI-extracted fields
+
+### Income Statement Model
+The Income Statement model stores payslip data including income amounts, tax deductions, occupation data, and confidence scores. Used for tax filing and user profile creation.
+
+![Income Statement Schema](images/income_statement_schema.png)
+
+**Key attributes:**
+- Primary Key: `id` - Unique identifier for each income statement
+- `gross_earnings`, `net_pay` - Core income values
+- `occupation_category` - Professional classification
+- `pay_date` - Statement date
+- `tax_items` - JSON array of tax deduction entries
+- Various confidence scores for AI-extracted fields
+
+## Data Relationships
+The database schema has the following key relationships:
+
+![Database Relationships](images/relationships.png)
+
+**Core relationships:**
+- Users have many Transactions (one-to-many)
+- Receipts generate Transactions (one-to-many)
+- Income Statements update User profiles
+- Line items are stored as JSON arrays within Receipts
+- Tax items are stored as JSON arrays within Income Statements
+
+## Schema Evolution
+The data models are designed to accommodate the full tax processing pipeline:
+1. Raw document processing via Google Document AI
+2. Structured data extraction with confidence scores
+3. Database storage with proper relationships
+4. Vector and semantic search for similar taxpayer situations
+5. Generation of tax insights and recommendations
+
+## Viewing Documentation
+All schema diagrams are available as PNG files in the `docs/schemas/images` directory for reference. The original PlantUML source files can be found in `docs/schemas/database` directory.
+
+## Other Documentation
+
+- `models/` - JSON schemas for API models
+- `api/` - API endpoint specifications

@@ -1,0 +1,34 @@
+@startuml Transaction Schema
+
+entity "Transaction" as transaction {
+  * transaction_id : string <<PK>>
+  * user_id : string <<FK>>
+  * receipt_id : string <<FK>>
+  --
+  transaction_date : datetime
+  amount : float
+  category : string
+  subcategory : string
+  description : string
+  vendor : string
+  --
+  confidence_score : float
+  amount_confidence : float
+  date_confidence : float
+  vendor_confidence : float
+  category_confidence : float
+  --
+  transaction_month : integer
+  quarter : integer
+  year : integer
+}
+
+note bottom of transaction
+  Transaction model stores financial activity
+  extracted from receipts or statements.
+  
+  Used for categorization, tax deduction analysis, 
+  and financial insights.
+end note
+
+@enduml 

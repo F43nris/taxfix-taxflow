@@ -1,0 +1,52 @@
+@startuml Receipt Schema
+
+' Use class diagram notation which is more compatible
+class "Receipt" as receipt {
+  + id : string <<PK>>
+  --
+  + file_path : string
+  + invoice_type : string
+  + invoice_type_confidence : float
+  --
+  + total_amount : float
+  + total_amount_confidence : float
+  + net_amount : float
+  + net_amount_confidence : float
+  + total_tax_amount : float
+  + total_tax_amount_confidence : float
+  --
+  + currency : string
+  + currency_confidence : float
+  + invoice_date : datetime
+  + invoice_date_confidence : float
+  --
+  + supplier_name : string
+  + supplier_name_confidence : float
+  + supplier_address : string
+  + supplier_address_confidence : float
+  + supplier_phone : string
+  + supplier_phone_confidence : float
+  --
+  + line_items : json  ' Stored as a JSON array
+}
+
+class "LineItem Structure" as lineitem <<json>> {
+  + quantity : integer
+  + quantity_confidence : float
+  + amount : float
+  + amount_confidence : float
+  + description : string
+}
+
+receipt *-- lineitem : contains >
+
+note bottom of receipt
+  Receipt model stores document extraction results
+  from parsed receipts including vendor information,
+  amounts, dates, and confidence scores.
+  
+  Line items are stored as a JSON array within the receipt,
+  not in a separate table.
+end note
+
+@enduml 

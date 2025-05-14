@@ -1,0 +1,36 @@
+@startuml User Schema
+
+entity "User" as user {
+  * user_id : string <<PK>>
+  --
+  occupation_category : string
+  occupation_category_confidence : float
+  --
+  filing_id : string
+  tax_year : integer
+  filing_date : datetime
+  --
+  avg_gross_pay : float
+  gross_pay_confidence : float
+  avg_net_pay : float
+  net_pay_confidence : float
+  avg_tax_deductions : float
+  --
+  annualized_income : float
+  annualized_net_pay : float
+  annualized_tax_deductions : float
+  --
+  payslip_count : integer
+  gross_pay_count : integer
+  net_pay_count : integer
+}
+
+note bottom of user
+  User model represents taxpayer information 
+  extracted and consolidated from payslips.
+  
+  The data is used for tax filing and 
+  recommendation purposes.
+end note
+
+@enduml 
