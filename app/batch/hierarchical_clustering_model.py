@@ -692,8 +692,9 @@ def create_cluster_relationship_viz(Z, cluster_labels, results_dir):
     plt.close()
 
 if __name__ == "__main__":
-    data_path = "casestudy/data/full_joined_data.csv"
-    results_dir = "tax_hierarchical_results"
+    # Dynamically construct data path and results directory
+    data_path = os.path.join(os.getenv('HOME'), 'taxfix', 'taxfix-taxflow', 'notebooks', 'processed_data', 'full_joined_data.csv')
+    results_dir = os.path.join(os.getenv('HOME'), 'taxfix', 'taxfix-taxflow', 'app', 'data', 'processed', 'tax_hierarchical_results')
     os.makedirs(results_dir, exist_ok=True)
     
     # Run hierarchical clustering analysis
