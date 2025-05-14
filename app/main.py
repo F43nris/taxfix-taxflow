@@ -326,172 +326,400 @@ def format_pipeline_results(results: str) -> str:
     print("\n[DEBUG] Starting format_pipeline_results")
     
     lines = results.split('\n')
-
-    # USER PARSING PASS
-    active_user_details = []
-    active_user_recommendations = []
-    in_user_details_capture_block = False
-    current_user_block_lines = []
-
-    # Flags to distinguish user recommendations from transaction recommendations
-    in_user_recommendation_context = False
-
-    for line_num, line in enumerate(lines):
+    
+    # Build a structured representation of the data
+    structured_data = {
+        "user_details": {
+            "input_user": {},
+            "similar_users": []
+        },
+        "transactions": {
+            "input_transactions": [],
+            "similar_transactions": {},
+            "relevant_transactions": []
+        },
+        "recommendations": [],
+        "tax_insights": {}
+    }
+    
+    # Parse user information
+    current_section = None
+    current_user = None
+    current_transaction = None
+    current_similar_txs = []
+    current_recommendation = None
+    in_recommendation = False
+    recommendation_text = []
+    recommendation_confidence = None
+    
+    for i, line in enumerate(lines):
         stripped_line = line.strip()
-
-        # Check for headers that delimit broad sections
-        if "Finding similar historical transactions for" in stripped_line or \
-           "Finding historical transactions similar to" in stripped_line:
-            in_user_recommendation_context = False # Now in transaction section
-            if current_user_block_lines: # Finalize any pending user block
-                active_user_details.extend(current_user_block_lines)
-                current_user_block_lines = []
-            in_user_details_capture_block = False
+        
+        # Skip empty lines and debug lines
+        if not stripped_line or stripped_line.startswith("[DEBUG]"):
             continue
             
-        if "INPUT USER " in stripped_line and "/" in stripped_line :
-            in_user_recommendation_context = True # Entering user section
-            if current_user_block_lines: 
-                active_user_details.extend(current_user_block_lines)
-                current_user_block_lines = []
-            in_user_details_capture_block = False 
+        # Identify sections
+        if "INPUT USER" in stripped_line and "/" in stripped_line:
+            current_section = "user_section"
             continue
-
-        if "Input User:" == stripped_line:
-            if current_user_block_lines: 
-                active_user_details.extend(current_user_block_lines)
-            current_user_block_lines = ["\n" + stripped_line]
-            in_user_details_capture_block = True
-            in_user_recommendation_context = True
+        elif "Input User:" == stripped_line:
+            current_section = "input_user"
+            current_user = {}
             continue
-
-        if "Similar Historical User" in stripped_line:
-            if current_user_block_lines: 
-                active_user_details.extend(current_user_block_lines)
-            current_user_block_lines = ["\n" + stripped_line]
-            in_user_details_capture_block = True
-            in_user_recommendation_context = True
+        elif "Similar Historical User" in stripped_line:
+            # Complete any in-progress recommendation
+            if in_recommendation and recommendation_text:
+                if current_user and "recommendations" not in current_user:
+                    current_user["recommendations"] = []
+                if current_user:
+                    current_user["recommendations"].append({
+                        "text": " ".join(recommendation_text),
+                        "confidence": recommendation_confidence
+                    })
+                recommendation_text = []
+                recommendation_confidence = None
+                in_recommendation = False
+                
+            current_section = "similar_user"
+            current_user = {"id": stripped_line}
+            structured_data["user_details"]["similar_users"].append(current_user)
             continue
-        
-        if in_user_details_capture_block:
-            if "User ID:" in stripped_line or \
-               "Occupation:" in stripped_line or \
-               "Annual Income:" in stripped_line or \
-               "Annual Tax Deductions:" in stripped_line or \
-               "Total Income:" in stripped_line or \
-               "Total Tax Deductions:" in stripped_line or \
-               "Similarity Score:" in stripped_line:
-                current_user_block_lines.append(stripped_line)
-            elif not stripped_line: 
-                if current_user_block_lines:
-                    active_user_details.extend(current_user_block_lines)
-                    current_user_block_lines = []
-
-        if in_user_recommendation_context:
-            if "Recommendation:" in stripped_line or \
-               "Uplift Message:" in stripped_line or \
-               "Confidence:" in stripped_line:
-                if "Deduction Recommendation:" not in stripped_line and \
-                   "Deduction Category:" not in stripped_line and \
-                   "Deductible:" not in stripped_line:
-                    active_user_recommendations.append(stripped_line)
-        
-    if current_user_block_lines:
-        active_user_details.extend(current_user_block_lines)
-
-    active_tx_details = []
-    active_tx_recommendations = []
-    in_transaction_processing_segment = False 
-    current_transaction_item_lines = [] 
-
-    for line in lines:
-        stripped_line = line.strip()
-
-        if "Finding similar historical transactions for" in stripped_line or \
-           "Finding historical transactions similar to" in stripped_line:
-            in_transaction_processing_segment = True
-            if current_transaction_item_lines: 
-                active_tx_details.extend(current_transaction_item_lines)
-                current_transaction_item_lines = []
-            continue 
-
-        if not in_transaction_processing_segment:
-            continue 
-
-        if "Input Transaction" in stripped_line or \
-           "Relevant Historical Transaction" in stripped_line or \
-           "Similar Historical Transaction" in stripped_line:
-            if current_transaction_item_lines: 
-                active_tx_details.extend(current_transaction_item_lines)
-            current_transaction_item_lines = ["\n" + stripped_line] 
-        elif "Transaction ID:" in stripped_line or "Date:" in stripped_line or \
-             "Amount:" in stripped_line or "Category:" in stripped_line or \
-             "Vendor:" in stripped_line or "Subcategory:" in stripped_line or \
-             "User ID:" in stripped_line or "Similarity Score:" in stripped_line:
-            if current_transaction_item_lines: 
-                current_transaction_item_lines.append(stripped_line)
-        elif "Deductible:" in stripped_line or \
-             "Deduction Recommendation:" in stripped_line or \
-             "Deduction Category:" in stripped_line:
-            active_tx_recommendations.append("\n" + stripped_line)
-        elif not stripped_line and current_transaction_item_lines:
-            active_tx_details.extend(current_transaction_item_lines)
-            current_transaction_item_lines = []
-
-    if current_transaction_item_lines:
-        active_tx_details.extend(current_transaction_item_lines)
+        elif "Input Transaction" in stripped_line:
+            # Complete any in-progress recommendation
+            if in_recommendation and recommendation_text:
+                if current_user and "recommendations" not in current_user:
+                    current_user["recommendations"] = []
+                if current_user:
+                    current_user["recommendations"].append({
+                        "text": " ".join(recommendation_text),
+                        "confidence": recommendation_confidence
+                    })
+                recommendation_text = []
+                recommendation_confidence = None
+                in_recommendation = False
+                
+            current_section = "input_transaction"
+            current_transaction = {"id": stripped_line}
+            structured_data["transactions"]["input_transactions"].append(current_transaction)
+            current_similar_txs = []
+            structured_data["transactions"]["similar_transactions"][stripped_line] = current_similar_txs
+            continue
+        elif "Similar Historical Transaction" in stripped_line:
+            current_section = "similar_transaction"
+            current_transaction = {"id": stripped_line}
+            current_similar_txs.append(current_transaction)
+            continue
+        elif "Relevant Historical Transaction" in stripped_line:
+            current_section = "relevant_transaction"
+            current_transaction = {"id": stripped_line}
+            structured_data["transactions"]["relevant_transactions"].append(current_transaction)
+            continue
+        elif "--------------------------------------------------------------------------------" in stripped_line:
+            # Section delimiter, reset recommendation tracking
+            if in_recommendation and recommendation_text:
+                if current_user and "recommendations" not in current_user:
+                    current_user["recommendations"] = []
+                if current_user:
+                    current_user["recommendations"].append({
+                        "text": " ".join(recommendation_text),
+                        "confidence": recommendation_confidence
+                    })
+                recommendation_text = []
+                recommendation_confidence = None
+                in_recommendation = False
+            continue
+            
+        # Process content based on current section
+        if current_section == "input_user" and current_user is not None:
+            if ":" in stripped_line:
+                key, value = stripped_line.split(":", 1)
+                current_user[key.strip()] = value.strip()
+                if key.strip() == "User ID":
+                    structured_data["user_details"]["input_user"] = current_user
+        elif current_section == "similar_user" and current_user is not None:
+            # Process similar user details
+            if ":" in stripped_line and not in_recommendation:
+                key, value = stripped_line.split(":", 1)
+                key = key.strip()
+                value = value.strip()
+                current_user[key] = value
+                
+                # Start capturing recommendation
+                if key == "Recommendation":
+                    in_recommendation = True
+                    recommendation_text = [value]
+                # Capture confidence level
+                elif key == "Confidence":
+                    recommendation_confidence = value
+                    
+                    # If we have both recommendation and confidence, save it
+                    if in_recommendation and recommendation_text:
+                        if "recommendations" not in current_user:
+                            current_user["recommendations"] = []
+                            
+                        current_user["recommendations"].append({
+                            "text": " ".join(recommendation_text),
+                            "confidence": recommendation_confidence
+                        })
+                        recommendation_text = []
+                        recommendation_confidence = None
+                        in_recommendation = False
+            # Continuation of recommendation text (multi-line)
+            elif in_recommendation:
+                recommendation_text.append(stripped_line)
+        elif current_section in ["input_transaction", "similar_transaction", "relevant_transaction"] and current_transaction is not None:
+            if ":" in stripped_line:
+                key, value = stripped_line.split(":", 1)
+                key = key.strip()
+                value = value.strip()
+                current_transaction[key] = value
+                
+                # Capture uplift messages and deduction info
+                if key == "Uplift Message":
+                    tx_id = current_transaction.get("Transaction ID")
+                    if tx_id:
+                        if tx_id not in structured_data["tax_insights"]:
+                            structured_data["tax_insights"][tx_id] = {
+                                "deduction_info": {},
+                                "uplift_message": value
+                            }
+                        else:
+                            structured_data["tax_insights"][tx_id]["uplift_message"] = value
+                elif key == "Deduction Recommendation":
+                    tx_id = current_transaction.get("Transaction ID")
+                    if tx_id:
+                        if tx_id not in structured_data["tax_insights"]:
+                            structured_data["tax_insights"][tx_id] = {
+                                "deduction_info": {
+                                    "recommendation": value
+                                },
+                                "uplift_message": None
+                            }
+                        else:
+                            structured_data["tax_insights"][tx_id]["deduction_info"]["recommendation"] = value
+                elif key == "Deduction Category":
+                    tx_id = current_transaction.get("Transaction ID")
+                    if tx_id and tx_id in structured_data["tax_insights"]:
+                        structured_data["tax_insights"][tx_id]["deduction_info"]["category"] = value
+                elif key == "Deductible":
+                    tx_id = current_transaction.get("Transaction ID")
+                    if tx_id and tx_id in structured_data["tax_insights"]:
+                        structured_data["tax_insights"][tx_id]["deduction_info"]["deductible"] = value
     
-    formatted_output_parts = []
+    # Capture any remaining recommendation
+    if in_recommendation and recommendation_text and current_user:
+        if "recommendations" not in current_user:
+            current_user["recommendations"] = []
+        current_user["recommendations"].append({
+            "text": " ".join(recommendation_text),
+            "confidence": recommendation_confidence
+        })
     
-    first_meaningful_line = -1
-    for i, line_content in enumerate(lines):
-        if ("INPUT USER" in line_content and "/" in line_content) or \
-           ("Input User:" == line_content.strip()) or \
-           "Finding similar historical transactions for" in line_content or \
-           "Finding historical transactions similar to" in line_content:
-            first_meaningful_line = i
-            break
+    # Now generate the formatted output
+    formatted_output = []
     
-    if first_meaningful_line > 0:
-        preamble = "\n".join(lines[:first_meaningful_line]).strip()
-        if preamble and preamble not in formatted_output_parts:
-            if not all(c == '=' for c in preamble.replace("\n", "")):
-                formatted_output_parts.append(preamble)
-
-    if active_user_details or active_user_recommendations:
-        if formatted_output_parts and formatted_output_parts[-1].strip() != "": 
-            formatted_output_parts.append("")
-        formatted_output_parts.append("="*80)
-        formatted_output_parts.append("USER ANALYSIS")
-        formatted_output_parts.append("="*80)
-        if active_user_details:
-            formatted_output_parts.append("\nUSER DETAILS:")
-            formatted_output_parts.extend(active_user_details)
-        if active_user_recommendations:
-            valid_user_recs = [rec for rec in active_user_recommendations if rec.strip()]
-            if valid_user_recs:
-                formatted_output_parts.append("\nRECOMMENDATIONS:")
-                formatted_output_parts.extend(valid_user_recs)
-
-    if active_tx_details or active_tx_recommendations:
-        if formatted_output_parts and formatted_output_parts[-1].strip() != "": 
-            formatted_output_parts.append("") 
-        formatted_output_parts.append("="*80)
-        formatted_output_parts.append("TRANSACTION ANALYSIS")
-        formatted_output_parts.append("="*80)
-        if active_tx_details:
-            formatted_output_parts.append("\nTRANSACTION DETAILS:")
-            formatted_output_parts.extend(active_tx_details)
-        if active_tx_recommendations:
-            valid_tx_recs = [rec for rec in active_tx_recommendations if rec.strip()]
-            if valid_tx_recs:
-                formatted_output_parts.append("\nDEDUCTION RECOMMENDATIONS:")
-                formatted_output_parts.extend(valid_tx_recs)
+    # Add header
+    formatted_output.append("="*80)
+    formatted_output.append("TAX INSIGHTS REPORT")
+    formatted_output.append("="*80)
+    formatted_output.append("")
+    
+    # User section
+    formatted_output.append("USER PROFILE")
+    formatted_output.append("-"*80)
+    input_user = structured_data["user_details"]["input_user"]
+    if input_user:
+        formatted_output.append(f"User ID: {input_user.get('User ID', 'N/A')}")
+        formatted_output.append(f"Occupation: {input_user.get('Occupation', 'N/A')}")
+        formatted_output.append(f"Annual Income: €{float(input_user.get('Annual Income', 0)):,.2f}")
+        formatted_output.append(f"Annual Tax Deductions: €{float(input_user.get('Annual Tax Deductions', 0)):,.2f}")
+    formatted_output.append("")
+    
+    # Personalized recommendations section
+    formatted_output.append("PERSONALIZED RECOMMENDATIONS")
+    formatted_output.append("-"*80)
+    
+    has_recommendations = False
+    for user in structured_data["user_details"]["similar_users"]:
+        if "recommendations" in user and user["recommendations"]:
+            has_recommendations = True
+            for rec in user["recommendations"]:
+                recommendation_text = rec["text"]
+                confidence = rec["confidence"]
+                
+                # Format recommendation for readability
+                if "|" in recommendation_text:
+                    parts = recommendation_text.split("|")
+                    for i, part in enumerate(parts):
+                        part = part.strip()
+                        if part:  # Skip empty parts
+                            if i == 0:
+                                formatted_output.append(f"• {part}")
+                            else:
+                                formatted_output.append(f"  {part}")
+                else:
+                    formatted_output.append(f"• {recommendation_text}")
+                
+                if confidence:
+                    formatted_output.append(f"  (Confidence: {confidence})")
+                formatted_output.append("")
+    
+    # If no recommendations were found, add a note
+    if not has_recommendations:
+        formatted_output.append("No personalized recommendations found.")
+        formatted_output.append("")
+    
+    # Transaction analysis section
+    if structured_data["transactions"]["input_transactions"]:
+        formatted_output.append("TRANSACTION ANALYSIS")
+        formatted_output.append("-"*80)
+        formatted_output.append("")
         
-    final_output_str = "\n".join(formatted_output_parts)
-    if final_output_str and not final_output_str.endswith("\n"):
-        final_output_str += "\n"
-
+        for input_tx in structured_data["transactions"]["input_transactions"]:
+            tx_id = input_tx.get("Transaction ID")
+            vendor = input_tx.get('Vendor', 'Unknown')
+            category = input_tx.get('Category', 'Unknown')
+            
+            formatted_output.append(f"YOUR TRANSACTION: {category} - {vendor}")
+            formatted_output.append(f"  ID: {tx_id}")
+            formatted_output.append(f"  Date: {input_tx.get('Date', 'N/A')}")
+            
+            # Format amount with euro symbol and commas
+            try:
+                amount = float(input_tx.get('Amount', 0))
+                formatted_output.append(f"  Amount: €{amount:,.2f}")
+            except ValueError:
+                formatted_output.append(f"  Amount: {input_tx.get('Amount', 'N/A')}")
+                
+            if "Subcategory" in input_tx:
+                formatted_output.append(f"  Subcategory: {input_tx.get('Subcategory')}")
+            formatted_output.append("")
+            
+            # Add similar transactions insights
+            similar_txs = structured_data["transactions"]["similar_transactions"].get(input_tx.get("id"), [])
+            if similar_txs:
+                formatted_output.append("  TAX INSIGHTS:")
+                
+                # Collect unique insights to avoid repetition
+                unique_insights = set()
+                deduction_categories = set()
+                uplift_messages = []
+                
+                for similar_tx in similar_txs:
+                    similar_tx_id = similar_tx.get("Transaction ID")
+                    if similar_tx_id in structured_data["tax_insights"]:
+                        insights = structured_data["tax_insights"][similar_tx_id]
+                        
+                        # Add tax deduction info
+                        if "deduction_info" in insights and insights["deduction_info"]:
+                            deduction_info = insights["deduction_info"]
+                            if "category" in deduction_info:
+                                deduction_categories.add(deduction_info.get('category'))
+                            
+                            if "recommendation" in deduction_info:
+                                # Try to extract the explanation from the recommendation JSON
+                                try:
+                                    import json
+                                    rec_text = deduction_info.get('recommendation').replace("'", '"')
+                                    # Handle nested quotes in the JSON string
+                                    rec_text = rec_text.replace('": "', '": \\"').replace('", "', '\\", "')
+                                    rec = json.loads(rec_text)
+                                    
+                                    if isinstance(rec, list) and len(rec) > 0 and "explanation" in rec[0]:
+                                        explanation = rec[0]['explanation']
+                                        unique_insights.add(explanation)
+                                except:
+                                    # If parsing fails, use the raw recommendation but clean it up
+                                    raw_rec = deduction_info.get('recommendation')
+                                    if raw_rec.startswith('[{') and raw_rec.endswith('}]'):
+                                        # Try to extract just the explanation part
+                                        if "'explanation':" in raw_rec:
+                                            parts = raw_rec.split("'explanation':")
+                                            if len(parts) > 1:
+                                                explanation_part = parts[1].strip()
+                                                if explanation_part.startswith("'"):
+                                                    end_quote = explanation_part.find("'", 1)
+                                                    if end_quote > 0:
+                                                        explanation = explanation_part[1:end_quote]
+                                                        unique_insights.add(explanation)
+                        
+                        # Add uplift message
+                        if insights["uplift_message"]:
+                            uplift_msg = insights["uplift_message"]
+                            if uplift_msg not in [msg["text"] for msg in uplift_messages]:
+                                message_type = "BENEFIT" if "💰" in uplift_msg else "CAUTION" if "⚠️" in uplift_msg else "TIP" if "💡" in uplift_msg else "INFO"
+                                
+                                # Clean the message text
+                                clean_msg = uplift_msg
+                                for prefix in ["💰 ", "⚠️ ", "💡 "]:
+                                    clean_msg = clean_msg.replace(prefix, "")
+                                    
+                                uplift_messages.append({
+                                    "type": message_type,
+                                    "text": clean_msg
+                                })
+                
+                # Output deduction categories
+                if deduction_categories:
+                    formatted_output.append(f"  • Tax Category: {', '.join(deduction_categories)}")
+                    formatted_output.append("")
+                
+                # Output unique insights
+                for insight in unique_insights:
+                    formatted_output.append(f"  • {insight}")
+                formatted_output.append("")
+                
+                # Output uplift messages
+                for msg in uplift_messages:
+                    formatted_output.append(f"  • {msg['type']}: {msg['text']}")
+                
+                formatted_output.append("")
+    
+    # Relevant transactions section
+    if structured_data["transactions"]["relevant_transactions"]:
+        formatted_output.append("ADDITIONAL RELEVANT INSIGHTS")
+        formatted_output.append("-"*80)
+        formatted_output.append("")
+        
+        for relevant_tx in structured_data["transactions"]["relevant_transactions"]:
+            tx_id = relevant_tx.get("Transaction ID")
+            formatted_output.append(f"RELEVANT TRANSACTION: {relevant_tx.get('Category', 'Unknown')}")
+            if "Subcategory" in relevant_tx:
+                formatted_output.append(f"  Subcategory: {relevant_tx.get('Subcategory')}")
+                
+            # Format amount with euro symbol and commas
+            try:
+                amount = float(relevant_tx.get('Amount', 0))
+                formatted_output.append(f"  Amount: €{amount:,.2f}")
+            except ValueError:
+                formatted_output.append(f"  Amount: {relevant_tx.get('Amount', 'N/A')}")
+            
+            if tx_id in structured_data["tax_insights"]:
+                insights = structured_data["tax_insights"][tx_id]
+                
+                # Add tax deduction info
+                if "deduction_info" in insights and insights["deduction_info"]:
+                    deduction_info = insights["deduction_info"]
+                    if "category" in deduction_info:
+                        formatted_output.append(f"  Tax Category: {deduction_info.get('category')}")
+                
+                # Add uplift message
+                if insights["uplift_message"]:
+                    # Format the uplift message for better readability
+                    uplift_msg = insights["uplift_message"]
+                    if "💰" in uplift_msg:
+                        formatted_output.append(f"  BENEFIT: {uplift_msg.replace('💰 ', '')}")
+                    elif "⚠️" in uplift_msg:
+                        formatted_output.append(f"  CAUTION: {uplift_msg.replace('⚠️ ', '')}")
+                    elif "💡" in uplift_msg:
+                        formatted_output.append(f"  TIP: {uplift_msg.replace('💡 ', '')}")
+                    else:
+                        formatted_output.append(f"  {uplift_msg}")
+            
+            formatted_output.append("")
+    
+    final_output_str = "\n".join(formatted_output)
     print("\n[DEBUG] Finished formatting pipeline results")
     return final_output_str
 

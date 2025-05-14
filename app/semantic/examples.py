@@ -21,7 +21,7 @@ def run_example_semantic_queries():
     
     try:
         example_queries = [
-            "Show all receipts categorized under business expenses."
+            "How much income did I receive from Company X in March 2025?"
         ]
         
         for i, query in enumerate(example_queries, 1):
