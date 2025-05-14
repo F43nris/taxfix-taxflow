@@ -36,60 +36,46 @@ def tax_peer_group_hierarchical(data_path, results_dir='.', income_quantiles=5, 
     df = pd.read_csv(data_path)
     print(f"Raw data shape: {df.shape}")
     print(f"Number of unique users: {df['user_id'].nunique()}")
-    print(f"Years in data: {sorted(df['year'].unique())}")
+    print(f"Tax years in data: {sorted(df['tax_year'].unique())}")
     print(f"Column names in dataset: {df.columns.tolist()}")
     
-    # Step 1: Aggregate data by user (across all years)
-    print("Aggregating data by user (across all years)")
+    # Step 1: Aggregate data by user and tax year
+    print("Aggregating data by user and tax year")
     
-    if 'category' in df.columns and 'amount' in df.columns:
-        # First, create user-year-category pivot
-        pivot_df = df.pivot_table(
-                index=['user_id', 'year'], 
-                columns='category', 
-                values='amount',
-                aggfunc='sum',
-                fill_value=0
-            )
-        
-        # Then, aggregate across years for each user (mean)
-        user_features = pivot_df.groupby(level='user_id').mean()
-        print(f"After pivoting and aggregating: {user_features.shape}")
-    else:
-        # If data is already in wide format with one row per user-year
-        user_features = df.groupby('user_id').mean()
-        print(f"After aggregating pre-pivoted data: {user_features.shape}")
+    # Create user-tax_year-category pivot
+    pivot_df = df.pivot_table(
+            index=['user_id', 'tax_year'], 
+            columns='category', 
+            values='amount',
+            aggfunc='sum',
+            fill_value=0
+        )
     
-    # Detect income column
-    income_col = next((col for col in ['total_income', 'income', 'annual_income', 'salary'] 
-                      if col in df.columns), None)
-
-    if income_col:
-        print(f"Using '{income_col}' as income column")
-        income_by_user = df.groupby('user_id')[income_col].mean()
-        income_by_user = income_by_user.clip(lower=1000)  # Avoid division issues
-        
-        # Create income bands
-        income_bands = pd.qcut(income_by_user, income_quantiles, 
-                              labels=[f'Band {i+1}' for i in range(income_quantiles)])
-        income_band_map = pd.DataFrame({'income_band': income_bands}, index=income_by_user.index)
-        
-        # Save income band information
-        income_ranges = pd.DataFrame({
-            'band': [f'Band {i+1}' for i in range(income_quantiles)],
-            'min': [income_by_user[income_bands == band].min() for band in income_bands.cat.categories],
-            'max': [income_by_user[income_bands == band].max() for band in income_bands.cat.categories],
-            'count': [sum(income_bands == band) for band in income_bands.cat.categories]
-        })
-        income_ranges.to_csv(os.path.join(results_dir, 'income_bands.csv'), index=False)
-    else:
-        print("WARNING: No income column found. Using default value of 50000")
-        income_by_user = pd.Series(50000, index=user_features.index)
-        income_band_map = pd.DataFrame({'income_band': 'Unknown'}, index=user_features.index)
+    # Then, aggregate across years for each user (mean)
+    user_features = pivot_df.groupby(level='user_id').mean()
+    print(f"After pivoting and aggregating: {user_features.shape}")
+    
+    # Get income data
+    income_by_user = df.groupby('user_id')['total_income'].mean()
+    income_by_user = income_by_user.clip(lower=1000)  # Avoid division issues
+    
+    # Create income bands
+    income_bands = pd.qcut(income_by_user, income_quantiles, 
+                          labels=[f'Band {i+1}' for i in range(income_quantiles)])
+    income_band_map = pd.DataFrame({'income_band': income_bands}, index=income_by_user.index)
+    
+    # Save income band information
+    income_ranges = pd.DataFrame({
+        'band': [f'Band {i+1}' for i in range(income_quantiles)],
+        'min': [income_by_user[income_bands == band].min() for band in income_bands.cat.categories],
+        'max': [income_by_user[income_bands == band].max() for band in income_bands.cat.categories],
+        'count': [sum(income_bands == band) for band in income_bands.cat.categories]
+    })
+    income_ranges.to_csv(os.path.join(results_dir, 'income_bands.csv'), index=False)
     
     # Step 2: Prepare features - normalize by income to get expense ratios
     expense_cols = [col for col in user_features.columns 
-                   if col not in ['user_id', 'year', income_col]]
+                   if col not in ['user_id', 'tax_year']]
     
     # Calculate expense ratios as percentage of income
     expense_ratios = user_features[expense_cols].div(income_by_user, axis=0) * 100
@@ -99,12 +85,33 @@ def tax_peer_group_hierarchical(data_path, results_dir='.', income_quantiles=5, 
     # Add demographic features to the clustering data
     demographic_features = []
 
-    # Check and add occupation_category if available
+    # Add occupation category if available
     if 'occupation_category' in df.columns:
         print("Adding occupation_category to clustering features")
         occupations = df.groupby('user_id')['occupation_category'].agg(lambda x: x.mode()[0])
         occupation_dummies = pd.get_dummies(occupations, prefix='job')
         demographic_features.append(occupation_dummies)
+
+    # Add age range if available
+    if 'age_range' in df.columns:
+        print("Adding age_range to clustering features")
+        age_ranges = df.groupby('user_id')['age_range'].agg(lambda x: x.mode()[0])
+        age_dummies = pd.get_dummies(age_ranges, prefix='age')
+        demographic_features.append(age_dummies)
+
+    # Add family status if available
+    if 'family_status' in df.columns:
+        print("Adding family_status to clustering features")
+        family_statuses = df.groupby('user_id')['family_status'].agg(lambda x: x.mode()[0])
+        family_dummies = pd.get_dummies(family_statuses, prefix='family')
+        demographic_features.append(family_dummies)
+
+    # Add region if available
+    if 'region' in df.columns:
+        print("Adding region to clustering features")
+        regions = df.groupby('user_id')['region'].agg(lambda x: x.mode()[0])
+        region_dummies = pd.get_dummies(regions, prefix='region')
+        demographic_features.append(region_dummies)
 
     # Combine expense ratios with demographic features
     if demographic_features:
@@ -323,80 +330,79 @@ def tax_peer_group_hierarchical(data_path, results_dir='.', income_quantiles=5, 
         # Calculate gaps (positive means user spends less than cluster average)
         gaps = cluster_avg - user_expenses
         
-        # Find significant gaps (potential tax optimization)
+        # Store all gaps, not just significant ones
         for category, gap in gaps.items():
-            if gap > 1.0:  # At least 1% of income difference
-                # Calculate confidence metrics for this recommendation
-                confidence_metrics = calculate_hierarchical_confidence(
-                    user_id, cluster_id, category, gap, 
-                    user_clusters, expense_ratios, 
-                    reduced_features, Z  # Pass linkage matrix instead of kmeans
-                )
-                
-                # Store basic gap data
-                gap_data.append({
-                    'user_id': user_id,
-                    'cluster_id': cluster_id,
-                    'category': category,
-                    'user_pct': user_expenses[category],
-                    'cluster_avg_pct': cluster_avg[category],
-                    'gap_pct': gap
-                })
-                
-                # Format recommendation with confidence level
-                if confidence_metrics['overall_confidence'] == "Very Strong":
-                    prefix = "⭐⭐⭐ HIGHLY RECOMMENDED:"
-                elif confidence_metrics['overall_confidence'] == "Strong":
-                    prefix = "⭐⭐ RECOMMENDED:"
-                elif confidence_metrics['overall_confidence'] == "Moderate":
-                    prefix = "⭐ CONSIDER:"
-                elif confidence_metrics['overall_confidence'] == "Weak":
-                    prefix = "💡 SUGGESTION:"
-                else:
-                    prefix = "🔍 EXPLORE:"
-                
-                # Get peer context
-                if 'occupation_category' in df.columns:
-                    peer_occupation = df[df['user_id'].isin(cluster_user_ids)]['occupation_category'].mode()[0]
-                    peer_context = f"Other {peer_occupation}"
-                else:
-                    peer_context = "Similar taxpayers"
-                
-                # Create enhanced recommendation text
-                if user_expenses[category] == 0:
-                    rec_text = (f"{prefix} {peer_context} claim {cluster_avg[category]:.1f}% of income "
-                               f"for {category}; you currently claim none. "
-                               f"{confidence_metrics['consistency_ratio']*100:.0f}% of similar taxpayers "
-                               f"benefit from this deduction.")
-                else:
-                    rec_text = (f"{prefix} {peer_context} claim {cluster_avg[category]:.1f}% of income "
-                               f"for {category}; you're at {user_expenses[category]:.1f}%. "
-                               f"Based on {confidence_metrics['sample_size']} similar taxpayers.")
-                
-                # Add statistical significance note if applicable
-                if confidence_metrics['statistically_significant']:
-                    rec_text += " This difference is statistically significant."
-                
-                # Create comprehensive recommendation with all metrics
-                recommendation = {
-                    'user_id': user_id,
-                    'category': category,
-                    'recommendation': rec_text,
-                    'gap_pct': gap,
-                    'cluster_avg_pct': cluster_avg[category],
-                    'user_pct': user_expenses[category],
-                    'confidence_level': confidence_metrics['overall_confidence'],
-                    'weighted_score': confidence_metrics['weighted_score'],
-                    'sample_size': confidence_metrics['sample_size'],
-                    'cluster_compactness': confidence_metrics['cluster_compactness'],
-                    'user_distance': confidence_metrics['user_distance'],
-                    'consistency_ratio': confidence_metrics['consistency_ratio'],
-                    'effect_size': confidence_metrics['effect_size'],
-                    'statistically_significant': confidence_metrics['statistically_significant'],
-                    'p_value': confidence_metrics['p_value']
-                }
-                
-                recommendations.append(recommendation)
+            # Calculate confidence metrics for this recommendation
+            confidence_metrics = calculate_hierarchical_confidence(
+                user_id, cluster_id, category, gap, 
+                user_clusters, expense_ratios, 
+                reduced_features, Z  # Pass linkage matrix instead of kmeans
+            )
+            
+            # Store basic gap data
+            gap_data.append({
+                'user_id': user_id,
+                'cluster_id': cluster_id,
+                'category': category,
+                'user_pct': user_expenses[category],
+                'cluster_avg_pct': cluster_avg[category],
+                'gap_pct': gap
+            })
+            
+            # Format recommendation with confidence level
+            if confidence_metrics['overall_confidence'] == "Very Strong":
+                prefix = "⭐⭐⭐ HIGHLY RECOMMENDED:"
+            elif confidence_metrics['overall_confidence'] == "Strong":
+                prefix = "⭐⭐ RECOMMENDED:"
+            elif confidence_metrics['overall_confidence'] == "Moderate":
+                prefix = "⭐ CONSIDER:"
+            elif confidence_metrics['overall_confidence'] == "Weak":
+                prefix = "💡 SUGGESTION:"
+            else:
+                prefix = "🔍 EXPLORE:"
+            
+            # Get peer context
+            if 'occupation_category' in df.columns:
+                peer_occupation = df[df['user_id'].isin(cluster_user_ids)]['occupation_category'].mode()[0]
+                peer_context = f"Other {peer_occupation}"
+            else:
+                peer_context = "Similar taxpayers"
+            
+            # Create enhanced recommendation text
+            if user_expenses[category] == 0:
+                rec_text = (f"{prefix} {peer_context} claim {cluster_avg[category]:.1f}% of income "
+                           f"for {category}; you currently claim none. "
+                           f"{confidence_metrics['consistency_ratio']*100:.0f}% of similar taxpayers "
+                           f"benefit from this deduction.")
+            else:
+                rec_text = (f"{prefix} {peer_context} claim {cluster_avg[category]:.1f}% of income "
+                           f"for {category}; you're at {user_expenses[category]:.1f}%. "
+                           f"Based on {confidence_metrics['sample_size']} similar taxpayers.")
+            
+            # Add statistical significance note if applicable
+            if confidence_metrics['statistically_significant']:
+                rec_text += " This difference is statistically significant."
+            
+            # Create comprehensive recommendation with all metrics
+            recommendation = {
+                'user_id': user_id,
+                'category': category,
+                'recommendation': rec_text,
+                'gap_pct': gap,
+                'cluster_avg_pct': cluster_avg[category],
+                'user_pct': user_expenses[category],
+                'confidence_level': confidence_metrics['overall_confidence'],
+                'weighted_score': confidence_metrics['weighted_score'],
+                'sample_size': confidence_metrics['sample_size'],
+                'cluster_compactness': confidence_metrics['cluster_compactness'],
+                'user_distance': confidence_metrics['user_distance'],
+                'consistency_ratio': confidence_metrics['consistency_ratio'],
+                'effect_size': confidence_metrics['effect_size'],
+                'statistically_significant': confidence_metrics['statistically_significant'],
+                'p_value': confidence_metrics['p_value']
+            }
+            
+            recommendations.append(recommendation)
 
     # Create DataFrames from collected data
     gaps_df = pd.DataFrame(gap_data)
@@ -579,7 +585,8 @@ def calculate_hierarchical_confidence(user_id, cluster_id, category, gap_pct, us
         pos_count = sum(signs > 0)
         n = len(signs)
         # Simple sign test (binomial test)
-        _, p_value = stats.binom_test(pos_count, n, p=0.5, alternative='greater')
+        result = stats.binomtest(pos_count, n, p=0.5, alternative='greater')
+        p_value = result.pvalue
         stat_sig = p_value < 0.1
         test_used = "Sign test"
         
