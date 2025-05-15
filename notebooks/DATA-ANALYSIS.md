@@ -30,8 +30,8 @@ Interpretation:
 - The distribution is right-skewed (long tail to the right), typical for expense data: most transactions are small, but a few large ones (e.g., rent, self-employment) pull the mean up.
 - This has implications for modeling: median and quantile-based analytics are more robust than mean-based for user-facing features.
 
-![alt text](notebooks/charts/amount_distribution.png "Amount Distribution") 
-![alt text](notebooks/charts/monthly_transactions.png "Monthly Transactions")
+![alt text](charts/amount_distribution.png "Amount Distribution") 
+![alt text](charts/monthly_transactions.png "Monthly Transactions")
 
 **Key Categories by Volume**
 - Transportation: 345 transactions (highest volume)
@@ -40,7 +40,7 @@ Interpretation:
 - Business Meals: 96 transactions
 - Self-Employment income: 71 transactions
 
-![alt text](notebooks/charts/category_distribution.png)
+![alt text](charts/category_distribution.png)
 
 **Financial Pattern Highlights**
 - Self-Employment and Rental have highest transaction values
@@ -48,7 +48,7 @@ Interpretation:
 - Transportation dominates by volume but has lower per-transaction value
 - Small recurring expenses dominate (insurance, transportation, business meals)
 
-![alt text](notebooks/charts/category_amount_comparison.png)
+![alt text](charts/category_amount_comparison.png)
 
 **Vendor Analysis**
 - BVG dominates (143 transactions) suggesting Berlin residency
@@ -59,7 +59,7 @@ Interpretation:
 Implication:
 - The data is rich for both classification (categorizing new transactions) and recommendation (suggesting deductions).
 
-![alt text](notebooks/charts/top_vendors.png)
+![alt text](charts/top_vendors.png)
 
 ## German Tax Implications
 1. Self-Employment Deductions
